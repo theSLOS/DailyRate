@@ -1,9 +1,10 @@
 import React, { JSX } from 'react';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { Tabs } from 'expo-router';
-import { StyleSheet } from 'react-native';
+import { Redirect, Tabs } from 'expo-router';
+import { StyleSheet, View } from 'react-native';
 
 import Colors from '@/constants/Colors';
+import { useAuth } from '@/hooks/useAuth';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 
@@ -16,13 +17,18 @@ function TabBarIcon(props: {
 
 export default function TabLayout(): JSX.Element {
   const colorScheme = useColorScheme();
+  const { session, loading } = useAuth();
+  const headerShown = useClientOnlyValue(false, true);
+
+  if (loading) return <View style={styles.fill} />;
+  if (!session) return <Redirect href="/(auth)/sign-in" />;
 
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         // prevents hydration error in React Navigation v6 on web
-        headerShown: useClientOnlyValue(false, true),
+        headerShown,
       }}
     >
       <Tabs.Screen
@@ -38,5 +44,8 @@ export default function TabLayout(): JSX.Element {
 const styles = StyleSheet.create({
   tabBarIcon: {
     marginBottom: -3,
+  },
+  fill: {
+    flex: 1,
   },
 });
