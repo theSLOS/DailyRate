@@ -1,0 +1,10 @@
+{
+  "extends": ["expo", "prettier"],
+  "plugins": ["react-native"],
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "error",
+    "@typescript-eslint/explicit-function-return-type": ["warn", { "allowExpressions": true }],
+    "react-native/no-inline-styles": "error",
+    "no-console": "warn"
+  }
+}
