@@ -7,6 +7,7 @@ import Colors from '@/constants/Colors';
 import { useAuth } from '@/hooks/useAuth';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+import { useEnsureTimezone } from '@/hooks/useEnsureTimezone';
 
 function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>['name'];
@@ -18,6 +19,7 @@ function TabBarIcon(props: {
 export default function TabLayout(): JSX.Element {
   const colorScheme = useColorScheme();
   const { session, loading } = useAuth();
+  useEnsureTimezone(session);
   const headerShown = useClientOnlyValue(false, true);
 
   if (loading) return <View style={styles.fill} />;
