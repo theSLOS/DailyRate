@@ -1,0 +1,76 @@
+import { JSX, useState } from 'react';
+import { Image, Pressable, Text, TextInput, View } from 'react-native';
+import { pickAndCompressImage } from '@/utils/pickAndCompressImage';
+
+type ComposeFormProps = {
+  initialRating?: number;
+  initialMessage?: string;
+  initialPhotoDisplayUri?: string | null; // already a viewable signed URL, resolved by the caller
+  submitting: boolean;
+  onSubmit: (values: { rating: number; message: string; newPhotoLocalUri: string | null }) => void;
+};
+
+export function ComposeForm(props: ComposeFormProps): JSX.Element {
+  const [rating, setRating] = useState(props.initialRating ?? 5);
+  const [message, setMessage] = useState(props.initialMessage ?? '');
+  const [newPhotoLocalUri, setNewPhotoLocalUri] = useState<string | null>(null);
+
+  const displayedPhotoUri = newPhotoLocalUri ?? props.initialPhotoDisplayUri ?? null;
+
+  async function handlePickPhoto(): Promise<void> {
+    const uri = await pickAndCompressImage();
+    if (uri) {
+      setNewPhotoLocalUri(uri);
+    }
+  }
+
+  function handleSubmit(): void {
+    props.onSubmit({ rating, message, newPhotoLocalUri });
+  }
+
+  return (
+    <View className="flex-1 p-6">
+      {/* rating picker: 10 pressable buttons, 1 through 10 */}
+      <View className="flex-row flex-wrap gap-2">
+        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+          <Pressable
+            key={n}
+            onPress={() => setRating(n)}
+            className={
+              n === rating
+                ? 'bg-black rounded-full w-10 h-10 items-center justify-center'
+                : 'bg-gray-200 rounded-full w-10 h-10 items-center justify-center'
+            }
+          >
+            <Text className={n === rating ? 'text-white' : 'text-black'}>{n}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <TextInput
+        className="border border-gray-300 rounded-lg p-3 mt-4"
+        value={message}
+        onChangeText={setMessage}
+        maxLength={280}
+        multiline
+        placeholder="How was your day?"
+      />
+
+      {displayedPhotoUri && (
+        <Image source={{ uri: displayedPhotoUri }} className="w-full h-48 rounded-lg mt-4" />
+      )}
+
+      <Pressable onPress={handlePickPhoto} className="mt-4">
+        <Text>{displayedPhotoUri ? 'Change photo' : 'Add photo'}</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={handleSubmit}
+        disabled={props.submitting}
+        className="bg-black rounded-lg p-4 mt-6 items-center"
+      >
+        <Text className="text-white">{props.submitting ? 'Saving...' : 'Save'}</Text>
+      </Pressable>
+    </View>
+  );
+}
