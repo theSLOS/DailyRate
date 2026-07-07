@@ -39,11 +39,17 @@ export default function TodayScreen(): JSX.Element {
   }): Promise<void> {
     if (!session) return;
 
+    const submitEntryDate = getEntryDate(new Date());
+    if (submitEntryDate === null) {
+      Alert.alert('No active posting window');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       let photoPath = todayPostQuery.data?.photo_url ?? null;
       if (values.newPhotoLocalUri) {
-        photoPath = await uploadPhoto(values.newPhotoLocalUri, session.user.id);
+        photoPath = await uploadPhoto(values.newPhotoLocalUri, session.user.id, submitEntryDate);
       }
 
       upsertPost.mutate(
