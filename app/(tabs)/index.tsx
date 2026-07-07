@@ -7,6 +7,7 @@ import { uploadPhoto } from '@/utils/uploadPhoto';
 import { getEntryDate } from '@/utils/getEntryDate';
 import { ComposeForm } from '@/components/ComposeForm';
 import { Centered } from '@/components/Centered';
+import type { JSX } from 'react';
 
 export default function TodayScreen(): JSX.Element {
   const { session } = useAuth();

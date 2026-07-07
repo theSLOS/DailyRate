@@ -1,10 +1,9 @@
-import type { Database } from '@/types/database';
 import { getEntryDate } from '@/utils/getEntryDate';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { UseQueryResult, UseMutationResult } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
-type Post = Database['public']['Tables']['posts']['Row'];
+import type { Post } from '@/types/posts';
 type UpsertPostInput = {
   userId: string;
   rating: number;
