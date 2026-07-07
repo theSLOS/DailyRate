@@ -26,7 +26,7 @@ Tech stack: Expo (React Native + Web) · TypeScript · Supabase (Postgres + Post
 |---|---|---|
 | 0 | Foundations & setup | complete |
 | 1 | Core posting loop | complete |
-| 2 | Personal history | not started |
+| 2 | Personal history | complete |
 | 3 | Explore feed + 36h rule | not started |
 | 4 | Engagement + blocking/reporting | not started |
 | 5 | Filtering & proximity | not started |

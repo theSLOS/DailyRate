@@ -32,4 +32,16 @@ Phase 1 is complete as of 2026-07-06. The following is working:
 
 **How to apply:** if extending posting/editing rules later (e.g. Phase 3+ visibility rules), check `get_entry_date` (SQL) and `utils/getEntryDate.ts` (client) first — they're the single source of truth for "what day is it for this user," and both must stay in sync if the window definition ever changes.
 
-Phase 2 is next: personal history — "Your days" list/calendar of all past entries + rating-over-time chart.
+Phase 2 is complete as of 2026-07-07. The following is working:
+- `usePostHistory` hook (`hooks/usePostHistory.ts`) — fetches all of the current user's own posts, no time filter, relying on the existing owner-only RLS from Phase 1 rather than an explicit `user_id` filter (same convention as `useTodayPost`)
+- Shared `Post` type extracted to `types/posts.ts` (was previously redeclared separately in each hook)
+- "Your days" tab (`app/(tabs)/history.tsx`) — reverse-chronological `FlatList` of `PostHistoryCard` rows (`components/PostHistoryCard.tsx`), with loading/error/empty states
+- Rating-over-time chart (`components/RatingHistoryChart.tsx`) using **Victory Native classic (`victory-native@^36`), not XL** — XL requires react-native-skia, which isn't available in Expo Go, so classic (SVG-based, via `react-native-svg`) was chosen specifically to keep native testing on Expo Go without a custom dev client
+- Chart shows a week/month/all-time toggle (client-side slice via `utils/filterPostsByRange.ts`, day-window constants in `constants/chart.ts`) with a **fixed 1–10 y-axis domain** (not auto-scaled) so a flat week of similar ratings doesn't visually read as a dramatic swing
+- Chart rendered as the history `FlatList`'s `ListHeaderComponent`, fed the full unfiltered post list (range-slicing happens inside the chart component, not the hook)
+
+**Why (Victory classic over XL):** user-facing decision driven by keeping the existing Expo Go testing workflow from Phase 0/1 intact — switching to XL would force a custom EAS dev client.
+
+**How to apply:** if a future phase (e.g. richer history analytics in §6 future ideas) needs more chart types, stick with `victory-native` classic components unless the Expo Go constraint is deliberately revisited.
+
+Phase 3 is next: Explore feed — RLS policies enabling the 36-hour public visibility window (extending, not replacing, the current owner-only SELECT policy — see spec §2.4 for the exact `USING` clause), feed UI, cursor pagination, and post detail screen.
