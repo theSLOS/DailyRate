@@ -10,12 +10,20 @@ import { Centered } from '@/components/Centered';
 import type { JSX } from 'react';
 
 export default function TodayScreen(): JSX.Element {
-  const { session } = useAuth();
+  const { session, loading: authLoading } = useAuth();
   const entryDate = getEntryDate(new Date());
-  const todayPostQuery = useTodayPost();
+  const todayPostQuery = useTodayPost(session?.user.id);
   const upsertPost = useUpsertPost();
   const photoUrlQuery = useSignedPhotoUrl(todayPostQuery.data?.photo_url ?? null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (authLoading) {
+    return (
+      <Centered>
+        <ActivityIndicator />
+      </Centered>
+    );
+  }
 
   if (entryDate === null) {
     return (

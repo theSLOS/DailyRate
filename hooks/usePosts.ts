@@ -11,7 +11,9 @@ type UpsertPostInput = {
   photoUrl?: string | null;
 };
 
-export function useTodayPost(): UseQueryResult<Post | null, PostgrestError> {
+export function useTodayPost(
+  userId: string | undefined
+): UseQueryResult<Post | null, PostgrestError> {
   const entryDate = getEntryDate(new Date());
 
   return useQuery({
@@ -20,10 +22,14 @@ export function useTodayPost(): UseQueryResult<Post | null, PostgrestError> {
       if (!entryDate) {
         return null;
       }
+      if (!userId) {
+        throw new Error('User ID is required');
+      }
       const { data, error } = await supabase
         .from('posts')
         .select('*')
         .eq('local_date', entryDate)
+        .eq('user_id', userId)
         .maybeSingle();
 
       if (error) {
@@ -31,7 +37,7 @@ export function useTodayPost(): UseQueryResult<Post | null, PostgrestError> {
       }
       return data;
     },
-    enabled: entryDate !== null,
+    enabled: entryDate !== null && userId !== undefined,
   });
 }
 

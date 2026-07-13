@@ -4,11 +4,13 @@ import { usePostHistory } from '@/hooks/usePostHistory';
 import { PostHistoryCard } from '@/components/PostHistoryCard';
 import { RatingHistoryChart } from '@/components/RatingHistoryChart';
 import { Centered } from '@/components/Centered';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function HistoryScreen(): JSX.Element {
-  const historyQuery = usePostHistory();
+  const { session, loading: authLoading } = useAuth();
+  const historyQuery = usePostHistory(session?.user.id);
 
-  if (historyQuery.isLoading) {
+  if (historyQuery.isLoading || authLoading) {
     return (
       <Centered>
         <ActivityIndicator />
