@@ -1,23 +1,23 @@
-import { useInfiniteQuery, UseInfiniteQueryResult } from '@tanstack/react-query';
+import { useInfiniteQuery, UseInfiniteQueryResult, InfiniteData } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { PostgrestError } from '@supabase/supabase-js';
-import type { Post } from '@/types/posts';
+import type { ExplorePost } from '@/types/posts';
 
 const PAGE_SIZE = 20;
 
 export function useExploreFeed(
   userId: string | undefined
-): UseInfiniteQueryResult<Post[], PostgrestError> {
+): UseInfiniteQueryResult<InfiniteData<ExplorePost[], string | undefined>, PostgrestError> {
   return useInfiniteQuery({
     queryKey: ['posts', { scope: 'explore' }],
     initialPageParam: undefined as string | undefined,
-    queryFn: async ({ pageParam: cursor }): Promise<Post[]> => {
+    queryFn: async ({ pageParam: cursor }): Promise<ExplorePost[]> => {
       if (!userId) {
         throw new Error('User ID is required');
       }
       let query = supabase
         .from('posts')
-        .select('*')
+        .select('*, author:profiles_public(username, display_name, avatar_url)')
         .neq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(PAGE_SIZE);
