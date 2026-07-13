@@ -44,4 +44,23 @@ Phase 2 is complete as of 2026-07-07. The following is working:
 
 **How to apply:** if a future phase (e.g. richer history analytics in §6 future ideas) needs more chart types, stick with `victory-native` classic components unless the Expo Go constraint is deliberately revisited.
 
-Phase 3 is next: Explore feed — RLS policies enabling the 36-hour public visibility window (extending, not replacing, the current owner-only SELECT policy — see spec §2.4 for the exact `USING` clause), feed UI, cursor pagination, and post detail screen.
+Phase 3 is in progress (started 2026-07-08). Status:
+- **Applied on 2026-07-13.** `posts` SELECT RLS policy is now `select own or live posts`, replacing the owner-only `select own posts`:
+  ```sql
+  drop policy "select own posts" on posts;
+  create policy "select own or live posts" on posts
+  for select using (
+    user_id = auth.uid()
+    or (created_at > now() - interval '36 hours' and moderation_status = 'approved')
+  );
+  ```
+  Lives at `supabase/migrations/20260713074345_extend_posts_select_policy.sql` and was pushed via the Supabase CLI (`npx supabase db push`), confirmed applied via `npx supabase migration list` (`remote` matches `local`). This is also the first entry in `supabase/migrations/` — migration tracking has started; schema changes before this one were still applied by hand via the dashboard SQL editor and aren't captured as files.
+  - **Verified end-to-end on 2026-07-13** via direct REST API calls (two real test accounts, tokens fetched from `/auth/v1/token?grant_type=password`, queried `/rest/v1/posts` directly — bypassing the app entirely per the "verify against the DB, not through the app" convention). Confirmed both directions: user A's query returned all of A's own posts (including two >36h old, from 07-06 and 07-07) plus B's live today-post; user B's query returned B's own post plus A's live today-post, but *not* A's older posts. RLS policy is confirmed correct as applied.
+- **Blocking prerequisite fixed as of 2026-07-13:** `usePostHistory` and `useTodayPost` (`hooks/usePosts.ts`, `hooks/usePostHistory.ts`) now both take an explicit `userId: string | undefined` param, threaded in from `session.user.id` (same pattern `uploadPhoto` uses), and filter with `.eq('user_id', userId)` inside `queryFn` — `useTodayPost` keeps its `.eq('local_date', entryDate)` filter alongside it, not instead of it. Both `enabled` flags gate on `userId !== undefined`. Callers (`app/(tabs)/index.tsx`, `app/(tabs)/history.tsx`) now destructure `loading: authLoading` from `useAuth()` and include it in their loading-state checks (`todayPostQuery.isLoading || authLoading`), since a disabled query reports `isLoading: false` — without this, both screens would flash unscoped/empty content while the session was still resolving.
+  - Two regressions surfaced and were caught in review during this fix, worth remembering as failure modes: (1) a `userId` guard placed in the hook body instead of inside `queryFn` throws synchronously on every render while `userId` is still `undefined` (i.e. on every mount, before session resolves) rather than surfacing as a query error — guards for "not ready yet" belong inside the async `queryFn`, gated by `enabled`; (2) adding a new `.eq()` filter is additive, not a replacement — `useTodayPost` briefly lost its `local_date` filter while gaining `user_id`, which would have made `.maybeSingle()` throw as soon as a user had more than one post.
+
+**Why:** RLS governs which rows a query *can* return, not which screen is asking — queries written to lean on RLS alone for "my own data" scoping silently break the instant RLS is widened for a different purpose (public visibility). This wasn't a problem through Phase 1–2 because RLS was strictly owner-only the whole time.
+
+- **App-level verification passed on 2026-07-13**, through the actual UI with the same two test accounts: each user's history screen shows only their own posts (no cross-user leakage), each user's Today screen shows only their own today's entry (no `.maybeSingle()` crash from the same-`local_date` collision), and a throttled reload shows a spinner throughout rather than a flash of empty content. All four `user_id`/`authLoading` fixes are confirmed working in the deployed app, not just in review.
+
+**How to apply:** Phase 3's RLS migration and the four hook/screen fixes are both fully verified — DB level and app level. Next up: build the Explore feed query (needs its own explicit `user_id <> auth.uid()` exclusion — RLS makes others' posts *visible*, it doesn't hide your own from a feed that shouldn't include them), cursor pagination, and the post detail screen.
