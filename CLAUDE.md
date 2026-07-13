@@ -4,19 +4,34 @@
 
 This project uses a **guide + review** workflow:
 
-1. **Claude explains** the next step: what to build, why it's structured that way, and any decisions to make before writing code.
+1. **Claude explains** the next step: what to build, why it's structured that way, and any decisions to make before writing code — paired with pseudo code sketching the shape of the function/component/query (not full working code; you still write the real implementation).
 2. **You write the code.** Claude won't write it for you unless you're stuck and explicitly ask.
 3. **You show Claude the result.** Paste the file or relevant section and ask for a review.
-4. **Claude reviews** for correctness, structure, and standards (see below). Flags issues; explains the why.
+4. **Claude reviews** for correctness, structure, and standards (see below). Flags issues and names the underlying principle behind each one, not just the patch — e.g. not just "move this into a hook" but *why* (separation of concerns, reusability, testability).
 
 When you're ready for the next step, say "next" or "what's next". Claude will explain the upcoming task at the right level of detail — not too high-level, not step-by-step hand-holding.
+
+A few standing rules within this workflow:
+- If there are multiple reasonable designs (e.g. client-side vs. DB-side proximity filtering), briefly present the trade-offs before picking one.
+- Ask before introducing a new library or dependency — explain why it's needed first.
+- Flag it explicitly when you're about to: tightly couple a UI component to Supabase/network calls directly, skip error or loading states on an async call, put business logic in a component instead of a hook, write a PostGIS/geo query that will scale badly, or miss RLS implications on a new table.
+- Recurring corrections (the same category of mistake twice) get captured in Claude's persistent memory rather than logged manually in this file.
 
 ---
 
 ## Project reference
 
 Full spec: `daily-rating-social-app-spec.md`  
+Architecture references: `docs/database-architecture.md` (add one per subsystem as its design stabilizes — don't create these upfront)  
 Tech stack: Expo (React Native + Web) · TypeScript · Supabase (Postgres + PostGIS + RLS + Edge Functions) · TanStack Query · NativeWind · Expo Router
+
+---
+
+## Sub-phase discipline
+
+Within whatever phase is current, tackle **one concept at a time**, not just one layer at a time — "backend," for instance, isn't one concept, it's schema design, RLS, data integrity, and geospatial queries bundled together. Mixing them makes it hard to tell what broke when something does.
+
+Implement one concept, verify it in isolation directly against the DB/API (not through the app), *then* stack the next concept on top. Don't wire multiple new concepts together in one sitting just because it's convenient.
 
 ---
 
@@ -27,7 +42,7 @@ Tech stack: Expo (React Native + Web) · TypeScript · Supabase (Postgres + Post
 | 0 | Foundations & setup | complete |
 | 1 | Core posting loop | complete |
 | 2 | Personal history | complete |
-| 3 | Explore feed + 36h rule | not started |
+| 3 | Explore feed + 36h rule | in progress |
 | 4 | Engagement + blocking/reporting | not started |
 | 5 | Filtering & proximity | not started |
 | 6 | Notifications | not started |
@@ -123,6 +138,9 @@ When you share code for review, Claude will check:
 - [ ] TypeScript strict compliance (no `any`, explicit types)
 - [ ] Component has no inline data fetching or business logic
 - [ ] Supabase query checks `error` before using `data`
+- [ ] Loading and error states are handled on every async call, not just the Supabase `error` field
+- [ ] New or changed tables have RLS implications called out explicitly
+- [ ] Geo/PostGIS queries are reviewed for scaling (e.g. no unindexed full-table proximity scans)
 - [ ] No magic numbers or hardcoded strings (use constants)
 - [ ] Named exports, no default exports on components
 - [ ] No inline styles
