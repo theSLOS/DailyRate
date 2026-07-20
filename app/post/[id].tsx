@@ -7,11 +7,15 @@ import { Centered } from '@/components/Centered';
 import { ActivityIndicator, ScrollView, Text, Image } from 'react-native';
 import { formatCoarseAge } from '@/utils/formatCoarseAge';
 import { ANONYMOUS_AUTHOR_LABEL } from '@/constants/posts';
+import { useAuth } from '@/hooks/useAuth';
+import { LikeButton } from '@/components/LikeButton';
+import { CommentThread } from '@/components/CommentThread';
 
 export default function PostDetailScreen(): JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>();
   const postQuery = usePost(id);
   const photoUrlQuery = useSignedPhotoUrl(postQuery.data?.photo_url ?? null);
+  const { session } = useAuth();
 
   return (
     <>
@@ -49,7 +53,12 @@ export default function PostDetailScreen(): JSX.Element {
               className="w-full aspect-[4/5] rounded-lg mt-4"
             />
           )}
-          {/* Comments and likes are Phase 4 — not built yet */}
+          <LikeButton
+            postId={postQuery.data.id}
+            userId={session?.user.id}
+            likeCount={postQuery.data.like_count}
+          />
+          <CommentThread postId={postQuery.data.id} userId={session?.user.id} />
         </ScrollView>
       )}
     </>
