@@ -42,7 +42,7 @@ Implement one concept, verify it in isolation directly against the DB/API (not t
 | 0 | Foundations & setup | complete |
 | 1 | Core posting loop | complete |
 | 2 | Personal history | complete |
-| 3 | Explore feed + 36h rule | in progress |
+| 3 | Explore feed + 36h rule | complete |
 | 4 | Engagement + blocking/reporting | not started |
 | 5 | Filtering & proximity | not started |
 | 6 | Notifications | not started |

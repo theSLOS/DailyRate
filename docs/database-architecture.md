@@ -1,8 +1,8 @@
 # Database Architecture — DayRate
 
 This document describes the Supabase/Postgres backend **as actually built**,
-not an aspirational design. Where something is decided but not yet applied
-(e.g. the Phase 3 RLS change below), that's called out explicitly. For a more
+not an aspirational design. Where something is decided but not yet applied,
+that's called out explicitly (see §7). For a more
 granular, frequently-updated build log, see `memory/project-phase-status.md`
 — treat that as the more current source if the two ever disagree; this doc is
 the settled reference once a phase's decisions stop moving.
@@ -14,7 +14,7 @@ the settled reference once a phase's decisions stop moving.
 | Role | Who uses it | What it can see |
 |---|---|---|
 | `anon` | Unauthenticated app requests | Nothing — no anon read policy exists on `posts` |
-| `authenticated` | Logged-in users, via the app | Own posts (any age). Once the Phase 3 policy below ships: own posts + everyone's live (last-36h, approved) posts |
+| `authenticated` | Logged-in users, via the app | Own posts (any age) + everyone's live (last-36h, approved) posts on `posts`; everyone's `id`/`username`/`display_name`/`avatar_url` via the `profiles_public` view (own `profiles` row only via the base table) |
 | `service_role` | Not yet used — no Edge Functions or admin tooling exist yet | Would bypass RLS entirely if used |
 | Postgres superuser (dashboard) | You personally, for schema changes and manual ops | Everything |
 
@@ -63,6 +63,16 @@ created_at               timestamptz default now()
 
 Both tables have RLS enabled.
 
+```sql
+-- profiles_public (Phase 3) — a view, not a table
+id            uuid
+username      text
+display_name  text
+avatar_url    text
+```
+
+Plain view (`create view ... as select id, username, display_name, avatar_url from profiles;`) with `grant select ... to authenticated`, and no `security_invoker`. That last part matters: a view without `security_invoker` runs as its *creator*, not the querying user — which is what lets it read every row of the owner-only-RLS `profiles` table and expose just these four columns to any signed-in user, without touching `profiles`'s own RLS at all. The column list is the entire privacy boundary here; there's no RLS check on the view itself, so anything added to that `select` becomes public immediately. Deliberately excludes `bio`, `role`, `is_suspended`, `notification_preferences`, `reminder_time`, `timezone`.
+
 ---
 
 ## 3. Entry-window rule
@@ -104,20 +114,19 @@ for select using (
 );
 ```
 
-**Not yet verified end-to-end.** The migration ran successfully, but that
-only confirms the policy exists — not that cross-user visibility behaves
-correctly in practice (see §8, still outstanding).
+**Verified end-to-end** — both DB-level (direct REST calls with two real
+test accounts) and app-level (through the actual UI). See §8.
 
 **Important:** RLS defines what a query is *allowed* to return for the
-requester — it doesn't scope a query to what a specific screen wants. Once
-this policy ships, any query against `posts` (not only the Explore feed) can
-return other users' live posts unless the query adds its own explicit filter.
-`hooks/usePosts.ts` and `hooks/usePostHistory.ts` already add an explicit
-`.eq('user_id', userId)` for exactly this reason (see
-`memory/project-phase-status.md`, Phase 3 entry). The Explore feed query
-(not yet built) will need the inverse — an explicit `user_id <> auth.uid()`
-exclusion, since RLS makes others' posts visible but doesn't hide your own
-from a feed that shouldn't include them.
+requester — it doesn't scope a query to what a specific screen wants. Any
+query against `posts` can return other users' live posts unless the query
+adds its own explicit filter. `hooks/usePosts.ts` and
+`hooks/usePostHistory.ts` add an explicit `.eq('user_id', userId)` to narrow
+back down to "just mine"; `hooks/useExploreFeed.ts` adds the inverse —
+`.neq('user_id', userId)` — since RLS makes others' posts visible but
+doesn't hide your own from a feed that shouldn't include them.
+`hooks/usePost.ts` (single post by id, for the detail screen) adds neither
+filter, since it deliberately wants the *full* RLS-permitted set for one id.
 
 ---
 
@@ -136,9 +145,12 @@ permanent public URL can't be taken back once shared.
 ## 6. Migration tracking
 
 Started 2026-07-13, via the Supabase CLI (`npx supabase init`, then
-`npx supabase migration new <name>` + `npx supabase db push`). The first
-migration is the SELECT policy change in §4:
-`supabase/migrations/20260713074345_extend_posts_select_policy.sql`.
+`npx supabase migration new <name>` + `npx supabase db push`). Two migrations
+so far:
+- `supabase/migrations/20260713074345_extend_posts_select_policy.sql` — the
+  SELECT policy change in §4.
+- `supabase/migrations/20260713092053_add_profiles_public_view.sql` — the
+  `profiles_public` view in §2.
 
 Everything before that (Phases 0–2: `posts`/`profiles` schema, the
 entry-window trigger and function in §3, storage bucket policies in §5) was
@@ -152,10 +164,6 @@ so drift like this doesn't recur.
 
 ## 7. Not yet designed / explicitly deferred
 
-- **Attribution model for the Explore feed** — no decision recorded on
-  whether other users' posts show `display_name`/`avatar_url` or are
-  anonymous. Resolve before building the Explore feed query or the post
-  detail screen (Phase 3).
 - **`moderation_status` workflow** — the column exists and is read by the
   Phase 3 RLS policy, but nothing sets or transitions it yet; no moderation
   tooling exists (Phase 4/7).
@@ -194,3 +202,25 @@ app UI, before wiring up any screen:
       today's entry (no cross-user leakage, no `.maybeSingle()` crash on the
       same-`local_date` collision), and the loading gate shows a spinner
       throughout a throttled load rather than flashing empty content.
+- [x] `hooks/useExploreFeed.ts` — confirm `.neq('user_id', userId)` correctly
+      excludes the requester's own posts, and the `author:profiles_public(...)`
+      embed returns data cross-user. **Verified 2026-07-13** via REST with
+      both test accounts (self-exclusion both directions, embedding
+      confirmed), and app-level through Expo Go (each account's Explore tab
+      shows only the other's live post).
+- [x] `profiles_public` — confirm it returns other users' rows while the
+      base `profiles` table still returns none cross-user. **Verified
+      2026-07-13** via REST: `profiles_public?id=eq.<other-user>` returned
+      data as a different signed-in user; `profiles?id=eq.<other-user>`
+      returned 0 rows for the same requester/target pair.
+- [x] `hooks/usePost.ts` + `app/post/[id].tsx` — confirm own posts stay
+      visible at any age, a nonexistent id resolves to not-found (not an
+      error), and a post that ages past 36h between being seen and being
+      requested by id also resolves to not-found. **Verified 2026-07-20**:
+      own 7-day-old post returned correctly; a garbage id returned 0 rows;
+      a cross-account post that had been live during the 2026-07-13 testing
+      pass had since aged out and returned 0 rows, confirming the not-found
+      path with real elapsed time rather than a constructed case. App-level:
+      routing verified in isolation before the card was wired, then the full
+      tap-to-detail loop, including hitting "This post is no longer
+      available" organically on an expired cross-account post.
