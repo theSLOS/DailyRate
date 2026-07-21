@@ -43,8 +43,9 @@ Implement one concept, verify it in isolation directly against the DB/API (not t
 | 1 | Core posting loop | complete |
 | 2 | Personal history | complete |
 | 3 | Explore feed + 36h rule | complete |
-| 4 | Engagement + blocking/reporting | not started |
-| 5 | Filtering & proximity | not started |
+| 4 | Engagement + blocking/reporting | complete |
+| 4.5 | Anonymous posting | not started |
+| 5 | Filtering & proximity (region-based, not distance-radius — see memory) | not started |
 | 6 | Notifications | not started |
 | 7 | Trust, safety & privacy | not started |
 | 8 | Polish & performance | not started |

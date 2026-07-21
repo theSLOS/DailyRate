@@ -2,6 +2,7 @@ import { useComments, useSubmitComment, CommentWithAuthor } from '@/hooks/useCom
 import { JSX, useState } from 'react';
 import { Pressable, View, Text, ActivityIndicator, TextInput } from 'react-native';
 import { ANONYMOUS_AUTHOR_LABEL } from '@/constants/posts';
+import { ReportButton } from '@/components/ReportButton';
 
 export type CommentThreadProps = {
   postId: string;
@@ -55,6 +56,9 @@ export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Eleme
           >
             <Text>Reply</Text>
           </Pressable>
+          {comment.user_id !== userId && (
+            <ReportButton reporterId={userId} targetType="comment" targetId={comment.id} />
+          )}
 
           {comment.replies.map((reply) => (
             <View key={reply.id} className="ml-4 mt-2">
@@ -73,6 +77,9 @@ export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Eleme
               >
                 <Text>Reply</Text>
               </Pressable>
+              {reply.user_id !== userId && (
+                <ReportButton reporterId={userId} targetType="comment" targetId={reply.id} />
+              )}
             </View>
           ))}
         </View>

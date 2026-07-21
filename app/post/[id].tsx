@@ -9,6 +9,8 @@ import { formatCoarseAge } from '@/utils/formatCoarseAge';
 import { ANONYMOUS_AUTHOR_LABEL } from '@/constants/posts';
 import { useAuth } from '@/hooks/useAuth';
 import { LikeButton } from '@/components/LikeButton';
+import { BlockButton } from '@/components/BlockButton';
+import { ReportButton } from '@/components/ReportButton';
 import { CommentThread } from '@/components/CommentThread';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -73,6 +75,16 @@ export default function PostDetailScreen(): JSX.Element {
               userId={session?.user.id}
               likeCount={postQuery.data.like_count}
             />
+            {session?.user.id !== postQuery.data.user_id && (
+              <>
+                <BlockButton blockerId={session?.user.id} blockedUserId={postQuery.data.user_id} />
+                <ReportButton
+                  reporterId={session?.user.id}
+                  targetType="post"
+                  targetId={postQuery.data.id}
+                />
+              </>
+            )}
           </View>
           <CommentThread postId={postQuery.data.id} userId={session?.user.id} />
         </ScrollView>
