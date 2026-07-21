@@ -43,3 +43,7 @@ yarn-error.*
 
 # Supabase CLI local cache
 supabase/.temp/
+
+# Claude collaboration memory (local session notes, not project docs)
+/memory/
+/docs/codebase-walkthrough.md
