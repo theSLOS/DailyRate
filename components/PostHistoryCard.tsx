@@ -8,7 +8,7 @@ export function PostHistoryCard(props: PostHistoryCardProps): JSX.Element {
   const photoUrlQuery = useSignedPhotoUrl(props.post.photo_url);
 
   return (
-    <View>
+    <View className="border border-gray-300 rounded-lg p-3 mb-3">
       <Text>{props.post.local_date}</Text>
       <Text>{props.post.rating}/10</Text>
       <Text>{props.post.message}</Text>

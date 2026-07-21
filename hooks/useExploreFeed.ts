@@ -2,6 +2,7 @@ import { useInfiniteQuery, UseInfiniteQueryResult, InfiniteData } from '@tanstac
 import { supabase } from '@/lib/supabase';
 import type { PostgrestError } from '@supabase/supabase-js';
 import type { ExplorePost } from '@/types/posts';
+import { POST_POLL_INTERVAL_MS } from '@/constants/posts';
 
 const PAGE_SIZE = 20;
 
@@ -35,5 +36,6 @@ export function useExploreFeed(
       return lastPage.length < PAGE_SIZE ? undefined : lastPage[lastPage.length - 1].created_at;
     },
     enabled: userId !== undefined,
+    refetchInterval: POST_POLL_INTERVAL_MS,
   });
 }

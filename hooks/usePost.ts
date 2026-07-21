@@ -3,6 +3,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useQuery } from '@tanstack/react-query';
+import { POST_POLL_INTERVAL_MS } from '@/constants/posts';
 
 export function usePost(
   postId: string | undefined
@@ -24,5 +25,6 @@ export function usePost(
       return data;
     },
     enabled: postId !== undefined,
+    refetchInterval: POST_POLL_INTERVAL_MS,
   });
 }

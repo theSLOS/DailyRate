@@ -3,17 +3,18 @@ import type { Comment, ExplorePost, ProfilePublicRow } from '@/types/posts';
 import type { UseQueryResult, UseMutationResult } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { CommentWithReplies, buildCommentTree } from '@/utils/buildCommentTree';
 
-type CommentWithAuthor = Comment & {
+export type CommentWithAuthor = Comment & {
   author: Pick<ProfilePublicRow, 'username' | 'display_name' | 'avatar_url'>;
 };
 
 export function useComments(
   postId: string | undefined
-): UseQueryResult<CommentWithAuthor[], PostgrestError> {
+): UseQueryResult<CommentWithReplies[], PostgrestError> {
   return useQuery({
     queryKey: ['comments', { postId }],
-    queryFn: async (): Promise<CommentWithAuthor[]> => {
+    queryFn: async (): Promise<CommentWithReplies[]> => {
       if (!postId) {
         throw new Error('Post ID is required');
       }
@@ -25,15 +26,20 @@ export function useComments(
       if (error) {
         throw error;
       }
-      return data;
+      return buildCommentTree(data);
     },
     enabled: postId !== undefined,
   });
 }
 
-type SubmitCommentInput = { postId: string; userId: string; body: string };
+type SubmitCommentInput = {
+  postId: string;
+  userId: string;
+  body: string;
+  parentCommentId?: string;
+};
 type SubmitCommentContext = {
-  previousComments: CommentWithAuthor[] | undefined;
+  previousComments: CommentWithReplies[] | undefined;
   previousPost: ExplorePost | null | undefined;
   postId: string;
 };
@@ -47,28 +53,31 @@ export function useSubmitComment(): UseMutationResult<
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ postId, userId, body }) => {
-      const { error } = await supabase
-        .from('comments')
-        .insert({ post_id: postId, user_id: userId, body });
+    mutationFn: async ({ postId, userId, body, parentCommentId }) => {
+      const { error } = await supabase.from('comments').insert({
+        post_id: postId,
+        user_id: userId,
+        body,
+        parent_comment_id: parentCommentId ?? null,
+      });
       if (error) {
         throw error;
       }
     },
-    onMutate: async ({ postId, userId, body }) => {
+    onMutate: async ({ postId, userId, body, parentCommentId }) => {
       const commentsKey = ['comments', { postId }];
       const postKey = ['posts', { id: postId }];
       await queryClient.cancelQueries({ queryKey: commentsKey });
       await queryClient.cancelQueries({ queryKey: postKey });
 
-      const previousComments = queryClient.getQueryData<CommentWithAuthor[]>(commentsKey);
+      const previousComments = queryClient.getQueryData<CommentWithReplies[]>(commentsKey);
       const previousPost = queryClient.getQueryData<ExplorePost | null>(postKey);
 
       const tempComment: CommentWithAuthor = {
         id: `temp-${Date.now()}`,
         post_id: postId,
         user_id: userId,
-        parent_comment_id: null,
+        parent_comment_id: parentCommentId ?? null,
         body: body,
         created_at: new Date().toISOString(),
         author: {
@@ -78,10 +87,16 @@ export function useSubmitComment(): UseMutationResult<
         },
       };
 
-      queryClient.setQueryData<CommentWithAuthor[]>(commentsKey, (old) => [
-        ...(old ?? []),
-        tempComment,
-      ]);
+      queryClient.setQueryData<CommentWithReplies[]>(commentsKey, (old) => {
+        if (!parentCommentId) {
+          return [...(old ?? []), { ...tempComment, replies: [] }];
+        }
+        return (old ?? []).map((topLevel) =>
+          topLevel.id === parentCommentId
+            ? { ...topLevel, replies: [...topLevel.replies, tempComment] }
+            : topLevel
+        );
+      });
       queryClient.setQueryData<ExplorePost | null>(postKey, (old) =>
         old ? { ...old, comment_count: old.comment_count + 1 } : old
       );

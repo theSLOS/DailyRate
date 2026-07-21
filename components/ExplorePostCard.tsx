@@ -13,7 +13,7 @@ export function ExplorePostCard({ post }: ExplorePostCardProps): JSX.Element {
 
   return (
     <Link href={{ pathname: '/post/[id]', params: { id: post.id } }} asChild>
-      <Pressable>
+      <Pressable className="border border-gray-300 rounded-lg p-3 mb-3">
         <Text>{post.author.display_name ?? post.author.username ?? ANONYMOUS_AUTHOR_LABEL}</Text>
         <Text>{formatCoarseAge(post.created_at, new Date())}</Text>
         <Text>{post.rating}/10</Text>
