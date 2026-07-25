@@ -1,4 +1,4 @@
-import type { ExplorePost } from '@/types/posts';
+import type { FeedPost } from '@/types/posts';
 import { useSignedPhotoUrl } from '@/hooks/useSignedPhotoUrl';
 import { JSX } from 'react';
 import { Image, Pressable, Text } from 'react-native';
@@ -6,7 +6,7 @@ import { formatCoarseAge } from '@/utils/formatCoarseAge';
 import { ANONYMOUS_AUTHOR_LABEL } from '@/constants/posts';
 import { Link } from 'expo-router';
 
-export type ExplorePostCardProps = { post: ExplorePost };
+export type ExplorePostCardProps = { post: FeedPost };
 
 export function ExplorePostCard({ post }: ExplorePostCardProps): JSX.Element {
   const photoUrlQuery = useSignedPhotoUrl(post.photo_url);
@@ -14,7 +14,7 @@ export function ExplorePostCard({ post }: ExplorePostCardProps): JSX.Element {
   return (
     <Link href={{ pathname: '/post/[id]', params: { id: post.id } }} asChild>
       <Pressable className="border border-gray-300 rounded-lg p-3 mb-3">
-        <Text>{post.author.display_name ?? post.author.username ?? ANONYMOUS_AUTHOR_LABEL}</Text>
+        <Text>{post.author_display_name ?? post.author_username ?? ANONYMOUS_AUTHOR_LABEL}</Text>
         <Text>{formatCoarseAge(post.created_at, new Date())}</Text>
         <Text>{post.rating}/10</Text>
         <Text>{post.message}</Text>

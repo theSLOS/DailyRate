@@ -2,13 +2,13 @@ import { supabase } from '@/lib/supabase';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { useQuery } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
-import type { ExplorePost } from '@/types/posts';
+import type { FeedPost } from '@/types/posts';
 import { useMutation, UseMutationResult, useQueryClient } from '@tanstack/react-query';
 
 type ToggleLikeInput = { postId: string; userId: string; liked: boolean }; // liked = state BEFORE this toggle
 type ToggleLikeContext = {
   previousLiked: boolean | undefined;
-  previousPost: ExplorePost | null | undefined;
+  previousPost: FeedPost | null | undefined;
 };
 
 export function useLikeStatus(
@@ -67,10 +67,10 @@ export function useToggleLike(): UseMutationResult<
       await queryClient.cancelQueries({ queryKey: postKey });
 
       const previousLiked = queryClient.getQueryData<boolean>(likeKey);
-      const previousPost = queryClient.getQueryData<ExplorePost | null>(postKey);
+      const previousPost = queryClient.getQueryData<FeedPost | null>(postKey);
 
       queryClient.setQueryData<boolean>(likeKey, !liked);
-      queryClient.setQueryData<ExplorePost | null>(postKey, (old) =>
+      queryClient.setQueryData<FeedPost | null>(postKey, (old) =>
         old ? { ...old, like_count: old.like_count + (!liked ? 1 : -1) } : old
       );
 

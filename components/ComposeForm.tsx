@@ -1,20 +1,27 @@
 import { JSX, useState } from 'react';
-import { Image, Pressable, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, Text, TextInput, View, Switch } from 'react-native';
 import { pickAndCompressImage } from '@/utils/pickAndCompressImage';
+import { ANONYMOUS_POST_WARNING } from '@/constants/posts';
 
 type ComposeFormProps = {
   initialRating?: number;
   initialMessage?: string;
   initialPhotoDisplayUri?: string | null; // already a viewable signed URL, resolved by the caller
   submitting: boolean;
-  onSubmit: (values: { rating: number; message: string; newPhotoLocalUri: string | null }) => void;
+  initialIsAnonymous?: boolean;
+  onSubmit: (values: {
+    rating: number;
+    message: string;
+    newPhotoLocalUri: string | null;
+    isAnonymous: boolean;
+  }) => void;
 };
 
 export function ComposeForm(props: ComposeFormProps): JSX.Element {
   const [rating, setRating] = useState(props.initialRating ?? 5);
   const [message, setMessage] = useState(props.initialMessage ?? '');
   const [newPhotoLocalUri, setNewPhotoLocalUri] = useState<string | null>(null);
-
+  const [isAnonymous, setIsAnonymous] = useState(props.initialIsAnonymous ?? false);
   const displayedPhotoUri = newPhotoLocalUri ?? props.initialPhotoDisplayUri ?? null;
 
   async function handlePickPhoto(): Promise<void> {
@@ -25,7 +32,7 @@ export function ComposeForm(props: ComposeFormProps): JSX.Element {
   }
 
   function handleSubmit(): void {
-    props.onSubmit({ rating, message, newPhotoLocalUri });
+    props.onSubmit({ rating, message, newPhotoLocalUri, isAnonymous });
   }
 
   return (
@@ -63,6 +70,12 @@ export function ComposeForm(props: ComposeFormProps): JSX.Element {
       <Pressable onPress={handlePickPhoto} className="mt-4">
         <Text>{displayedPhotoUri ? 'Change photo' : 'Add photo'}</Text>
       </Pressable>
+
+      <View className="flex-row items-center justify-between mt-4">
+        <Text>Post anonymously</Text>
+        <Switch value={isAnonymous} onValueChange={setIsAnonymous} />
+      </View>
+      {isAnonymous && <Text className="text-gray-500 mt-2">{ANONYMOUS_POST_WARNING}</Text>}
 
       <Pressable
         onPress={handleSubmit}

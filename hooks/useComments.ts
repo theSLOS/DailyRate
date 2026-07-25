@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import type { Comment, ExplorePost, ProfilePublicRow } from '@/types/posts';
+import type { Comment, FeedPost, ProfilePublicRow } from '@/types/posts';
 import type { UseQueryResult, UseMutationResult } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -40,7 +40,7 @@ type SubmitCommentInput = {
 };
 type SubmitCommentContext = {
   previousComments: CommentWithReplies[] | undefined;
-  previousPost: ExplorePost | null | undefined;
+  previousPost: FeedPost | null | undefined;
   postId: string;
 };
 
@@ -71,7 +71,7 @@ export function useSubmitComment(): UseMutationResult<
       await queryClient.cancelQueries({ queryKey: postKey });
 
       const previousComments = queryClient.getQueryData<CommentWithReplies[]>(commentsKey);
-      const previousPost = queryClient.getQueryData<ExplorePost | null>(postKey);
+      const previousPost = queryClient.getQueryData<FeedPost | null>(postKey);
 
       const tempComment: CommentWithAuthor = {
         id: `temp-${Date.now()}`,
@@ -97,7 +97,7 @@ export function useSubmitComment(): UseMutationResult<
             : topLevel
         );
       });
-      queryClient.setQueryData<ExplorePost | null>(postKey, (old) =>
+      queryClient.setQueryData<FeedPost | null>(postKey, (old) =>
         old ? { ...old, comment_count: old.comment_count + 1 } : old
       );
 

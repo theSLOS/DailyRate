@@ -127,6 +127,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "comments_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts_feed"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "comments_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
@@ -170,6 +177,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "likes_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts_feed"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "likes_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
@@ -190,6 +204,7 @@ export type Database = {
           comment_count: number
           created_at: string
           id: string
+          is_anonymous: boolean
           like_count: number
           local_date: string
           location: unknown
@@ -205,6 +220,7 @@ export type Database = {
           comment_count?: number
           created_at?: string
           id?: string
+          is_anonymous?: boolean
           like_count?: number
           local_date: string
           location?: unknown
@@ -220,6 +236,7 @@ export type Database = {
           comment_count?: number
           created_at?: string
           id?: string
+          is_anonymous?: boolean
           like_count?: number
           local_date?: string
           location?: unknown
@@ -259,6 +276,7 @@ export type Database = {
           notification_preferences: Json
           reminder_time: string | null
           role: string
+          tier: string
           timezone: string | null
           username: string | null
         }
@@ -272,6 +290,7 @@ export type Database = {
           notification_preferences?: Json
           reminder_time?: string | null
           role?: string
+          tier?: string
           timezone?: string | null
           username?: string | null
         }
@@ -285,6 +304,7 @@ export type Database = {
           notification_preferences?: Json
           reminder_time?: string | null
           role?: string
+          tier?: string
           timezone?: string | null
           username?: string | null
         }
@@ -420,6 +440,25 @@ export type Database = {
           f_table_schema?: unknown
           srid?: number | null
           type?: string | null
+        }
+        Relationships: []
+      }
+      posts_feed: {
+        Row: {
+          author_avatar_url: string | null
+          author_display_name: string | null
+          author_username: string | null
+          comment_count: number | null
+          created_at: string | null
+          id: string | null
+          is_anonymous: boolean | null
+          like_count: number | null
+          local_date: string | null
+          message: string | null
+          moderation_status: string | null
+          photo_url: string | null
+          rating: number | null
+          user_id: string | null
         }
         Relationships: []
       }

@@ -45,6 +45,7 @@ export default function TodayScreen(): JSX.Element {
     rating: number;
     message: string;
     newPhotoLocalUri: string | null;
+    isAnonymous: boolean;
   }): Promise<void> {
     if (!session) return;
 
@@ -58,7 +59,7 @@ export default function TodayScreen(): JSX.Element {
     try {
       let photoPath = todayPostQuery.data?.photo_url ?? null;
       if (values.newPhotoLocalUri) {
-        photoPath = await uploadPhoto(values.newPhotoLocalUri, session.user.id, submitEntryDate);
+        photoPath = await uploadPhoto(values.newPhotoLocalUri);
       }
 
       upsertPost.mutate(
@@ -67,6 +68,7 @@ export default function TodayScreen(): JSX.Element {
           rating: values.rating,
           message: values.message,
           photoUrl: photoPath,
+          isAnonymous: values.isAnonymous,
         },
         {
           onError: (error) => Alert.alert('Could not save your entry', error.message),
@@ -88,6 +90,7 @@ export default function TodayScreen(): JSX.Element {
       initialMessage={todayPostQuery.data?.message}
       initialPhotoDisplayUri={photoUrlQuery.data ?? null}
       submitting={isSubmitting}
+      initialIsAnonymous={todayPostQuery.data?.is_anonymous}
       onSubmit={handleSubmit}
     />
   );

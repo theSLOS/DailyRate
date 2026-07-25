@@ -1,10 +1,18 @@
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePost } from '@/hooks/usePost';
 import { JSX, useState } from 'react';
 import { useSignedPhotoUrl } from '@/hooks/useSignedPhotoUrl';
 import { Stack } from 'expo-router';
 import { Centered } from '@/components/Centered';
-import { ActivityIndicator, ScrollView, Text, Image, RefreshControl, View } from 'react-native';
+import {
+  ActivityIndicator,
+  ScrollView,
+  Text,
+  Image,
+  RefreshControl,
+  View,
+  Pressable,
+} from 'react-native';
 import { formatCoarseAge } from '@/utils/formatCoarseAge';
 import { ANONYMOUS_AUTHOR_LABEL } from '@/constants/posts';
 import { useAuth } from '@/hooks/useAuth';
@@ -13,6 +21,7 @@ import { BlockButton } from '@/components/BlockButton';
 import { ReportButton } from '@/components/ReportButton';
 import { CommentThread } from '@/components/CommentThread';
 import { useQueryClient } from '@tanstack/react-query';
+import { useHidePost } from '@/hooks/useHiddenPosts';
 
 export default function PostDetailScreen(): JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -21,6 +30,9 @@ export default function PostDetailScreen(): JSX.Element {
   const { session } = useAuth();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
+  const hidePost = useHidePost();
+  const router = useRouter();
+  const post = postQuery.data;
 
   const onRefresh = async (): Promise<void> => {
     setRefreshing(true);
@@ -45,24 +57,22 @@ export default function PostDetailScreen(): JSX.Element {
           <Text>Couldn't load this post.</Text>
         </Centered>
       )}
-      {!postQuery.isLoading && !postQuery.error && !postQuery.data && (
+      {!postQuery.isLoading && !postQuery.error && !post && (
         <Centered>
           <Text>This post is no longer available.</Text>
         </Centered>
       )}
-      {postQuery.data && (
+      {post && (
         <ScrollView
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
           <View className="border border-gray-300 rounded-lg p-3 mb-3">
             <Text>
-              {postQuery.data.author.display_name ??
-                postQuery.data.author.username ??
-                ANONYMOUS_AUTHOR_LABEL}
+              {post.author_display_name ?? post.author_username ?? ANONYMOUS_AUTHOR_LABEL}
             </Text>
-            <Text>{formatCoarseAge(postQuery.data.created_at, new Date())}</Text>
-            <Text>{postQuery.data.rating}/10</Text>
-            <Text>{postQuery.data.message}</Text>
+            <Text>{formatCoarseAge(post.created_at, new Date())}</Text>
+            <Text>{post.rating}/10</Text>
+            <Text>{post.message}</Text>
             {photoUrlQuery.data && (
               <Image
                 source={{ uri: photoUrlQuery.data }}
@@ -70,23 +80,29 @@ export default function PostDetailScreen(): JSX.Element {
                 className="w-full aspect-[4/5] rounded-lg mt-4"
               />
             )}
-            <LikeButton
-              postId={postQuery.data.id}
-              userId={session?.user.id}
-              likeCount={postQuery.data.like_count}
-            />
-            {session?.user.id !== postQuery.data.user_id && (
+            <LikeButton postId={post.id} userId={session?.user.id} likeCount={post.like_count} />
+            {session?.user.id !== post.user_id && (
               <>
-                <BlockButton blockerId={session?.user.id} blockedUserId={postQuery.data.user_id} />
                 <ReportButton
                   reporterId={session?.user.id}
                   targetType="post"
-                  targetId={postQuery.data.id}
+                  targetId={post.id}
                 />
+                <Pressable
+                  onPress={() => {
+                    hidePost.mutate(post.id);
+                    router.back();
+                  }}
+                >
+                  <Text>Hide this post</Text>
+                </Pressable>
               </>
             )}
+            {post.user_id !== null && session?.user.id !== post.user_id && (
+              <BlockButton blockerId={session?.user.id} blockedUserId={post.user_id} />
+            )}
           </View>
-          <CommentThread postId={postQuery.data.id} userId={session?.user.id} />
+          <CommentThread postId={post.id} userId={session?.user.id} />
         </ScrollView>
       )}
     </>

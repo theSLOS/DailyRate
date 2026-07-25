@@ -7,6 +7,12 @@ granular, frequently-updated build log, see `memory/project-phase-status.md`
 — treat that as the more current source if the two ever disagree; this doc is
 the settled reference once a phase's decisions stop moving.
 
+For the **reasoning** behind how feeds are served, cached, personalized, and
+kept anonymous (the front server, Redis, the anonymity strip-at-DB decision,
+moderation of anonymous posts, the friends feed) — see
+`docs/feed-and-caching-architecture.md`. That's the *why*; this doc stays the
+schema/RLS *what*.
+
 ---
 
 ## 1. Roles overview
@@ -39,11 +45,12 @@ location          geography(Point, 4326)   -- present, unused until Phase 5 prox
 photo_url         text                     -- storage *path* in the private 'post-photos' bucket, not a public URL
 photo_thumb_url   text
 moderation_status text                     -- drives Phase 3's "live" visibility condition; no moderation workflow sets/transitions it yet
-like_count        int default 0            -- column exists; no engagement feature built (Phase 4)
-comment_count     int default 0            -- same
+like_count        int default 0            -- kept in sync by a trigger (Phase 4, §4)
+comment_count     int default 0            -- kept in sync by a trigger (Phase 4, §4)
 place_label       text                     -- human-readable location label; not yet wired to any UI
 
 unique (user_id, local_date)
+index posts_user_id_created_at_idx on (user_id, created_at desc)  -- Phase 4.5 prep; marginal help for user_id-scoped scans (usePostHistory)
 ```
 
 ```sql
@@ -58,6 +65,7 @@ is_suspended             boolean default false
 notification_preferences jsonb
 reminder_time            time
 timezone                 text   -- backfilled client-side on first sign-in (hooks/useEnsureTimezone.ts) since onboarding doesn't collect it
+tier                     text not null default 'free'  -- paywall insurance, unused; 'free' | 'premium'. Deliberately NOT in profiles_public (see below) so it stays private
 created_at               timestamptz default now()
 ```
 
@@ -71,7 +79,7 @@ display_name  text
 avatar_url    text
 ```
 
-Plain view (`create view ... as select id, username, display_name, avatar_url from profiles;`) with `grant select ... to authenticated`, and no `security_invoker`. That last part matters: a view without `security_invoker` runs as its *creator*, not the querying user — which is what lets it read every row of the owner-only-RLS `profiles` table and expose just these four columns to any signed-in user, without touching `profiles`'s own RLS at all. The column list is the entire privacy boundary here; there's no RLS check on the view itself, so anything added to that `select` becomes public immediately. Deliberately excludes `bio`, `role`, `is_suspended`, `notification_preferences`, `reminder_time`, `timezone`.
+Plain view (`create view ... as select id, username, display_name, avatar_url from profiles;`) with `grant select ... to authenticated`, and no `security_invoker`. That last part matters: a view without `security_invoker` runs as its *creator*, not the querying user — which is what lets it read every row of the owner-only-RLS `profiles` table and expose just these four columns to any signed-in user, without touching `profiles`'s own RLS at all. The column list is the entire privacy boundary here; there's no RLS check on the view itself, so anything added to that `select` becomes public immediately. Deliberately excludes `bio`, `role`, `is_suspended`, `notification_preferences`, `reminder_time`, `timezone`, `tier`.
 
 ```sql
 -- likes (Phase 4)
@@ -98,7 +106,34 @@ created_at         timestamptz default now()
 index on post_id   -- no unique(post_id, user_id) here, unlike likes: one user can post many comments
 ```
 
-RLS enabled. `comment_count` on `posts` is kept in sync by a trigger, same mechanism as `like_count` — see §4.
+RLS enabled. `comment_count` on `posts` is kept in sync by a trigger, same mechanism as `like_count` — see §4. **Replies are now built** (Phase 4): `parent_comment_id` is written, with a client-enforced 2-level cap (a reply-to-a-reply resolves back to the top-level parent, never a 3rd tier — see `components/CommentThread.tsx`). No schema change was needed for replies; the counter trigger already counts every row regardless of `parent_comment_id`.
+
+```sql
+-- blocks (Phase 4)
+blocker_id  uuid not null references profiles(id) on delete cascade
+blocked_id  uuid not null references profiles(id) on delete cascade
+created_at  timestamptz default now()
+
+primary key (blocker_id, blocked_id)   -- composite PK, no surrogate id: nothing references a block by id
+check (blocker_id <> blocked_id)       -- self-blocking impossible at the DB layer
+```
+
+RLS enabled — see §4 for its deliberately asymmetric policy (you can see who you blocked; no one can discover who blocked them).
+
+```sql
+-- reports (Phase 4)
+id           uuid primary key default gen_random_uuid()
+reporter_id  uuid references profiles(id) not null
+target_type  text not null   -- check: 'post' | 'comment'
+target_id    uuid not null   -- polymorphic across posts/comments — deliberately NO FK
+reason       text
+status       text default 'pending'   -- check: 'pending' | 'reviewed' | 'dismissed'
+reviewed_by  uuid references profiles(id) on delete set null   -- not cascade: losing an admin shouldn't delete reports
+reviewed_at  timestamptz
+created_at   timestamptz default now()
+```
+
+RLS enabled — insert-only for regular users, no select/update/delete (§4). The admin review workflow (reading/transitioning reports) is deferred; data capture exists now.
 
 ---
 
@@ -139,6 +174,21 @@ for select using (
   user_id = auth.uid()
   or (created_at > now() - interval '36 hours' and moderation_status = 'approved')
 );
+```
+
+**Updated again in Phase 4** (`20260721053057_block_exclusion_visibility.sql`):
+the *cross-user* branch gained a two-way block exclusion — the same live post is
+hidden if a block exists in either direction between the requester and the
+post's owner. The `user_id = auth.uid()` (own content) branch is untouched:
+blocking never hides your own posts from yourself.
+
+```sql
+-- the cross-user branch now also requires:
+and not exists (
+  select 1 from blocks
+  where (blocker_id = auth.uid() and blocked_id = posts.user_id)
+     or (blocker_id = posts.user_id and blocked_id = auth.uid())
+)
 ```
 
 **Verified end-to-end** — both DB-level (direct REST calls with two real
@@ -206,6 +256,24 @@ filter, since it deliberately wants the *full* RLS-permitted set for one id.
   once replies exist they'll count toward the total too (matches how a
   "47 comments" total normally includes the whole thread, not just
   top-level) — no changes needed to this trigger when replies are built.
+- Comments' SELECT policy gained its **own** two-way block-exclusion clause
+  (on `comments.user_id`) in the same Phase 4 migration, independent of the
+  post's own visibility — so a blocked person's individual comment disappears
+  even on a post you still own and can see.
+
+**`blocks` (Phase 4):** RLS is intentionally **asymmetric**, unlike every other
+table. SELECT is scoped to `blocker_id = auth.uid()` only — you can see who
+*you* blocked, but **no policy lets anyone discover who has blocked them** (a
+deliberate privacy decision; verified: the blocked user's `select *` returns
+`[]`, not a permission error and not the row). INSERT/DELETE are both gated by
+`blocker_id = auth.uid()`; no UPDATE policy (a block either exists or doesn't).
+
+**`reports` (Phase 4):** **insert-only for regular users — no SELECT, UPDATE,
+or DELETE policy at all** (the reporter can't even read their own reports back).
+The insert `with check` requires the reported target to actually be visible to
+the reporter (an `exists` against `posts` or `comments` by `target_type`),
+which transitively inherits both the 36h window and the block exclusion for
+free. The admin review UI is deferred; only data capture exists now.
 
 ---
 
@@ -218,6 +286,26 @@ folder (exact policy SQL not yet captured as a migration — applied by hand).
 signed URL at read time. Chosen over a public bucket specifically so photo
 access can be revoked later (the 36h rule, blocking, moderation) — a
 permanent public URL can't be taken back once shared.
+
+**Cross-user photo visibility fix (Phase 4,
+`20260721070228_photo_storage_cross_user_visibility.sql`):** the original
+`storage.objects` policies were strictly owner-only and never mirrored the 36h
+window, so no one could ever see anyone else's photos (a latent Phase 1 bug,
+surfaced the first time a photo-bearing post was viewed cross-user). The fix
+adds one permissive SELECT policy that allows a read when a `posts` row's
+`photo_url` matches the object path **and** that post is currently visible by
+the same rule `posts`' own SELECT policy uses (own, or live + approved + not
+blocked either direction). **Known duplication risk, flagged:** that visibility
+condition now lives in three places (`posts` policy, `comments` policy, this
+storage policy) — if the rule changes, all three must change together.
+
+**Phase 4.5 change (planned):** the current path embeds the uploader's
+`user_id` as its first folder segment, which would deanonymize an anonymous
+post via its photo URL. From 4.5, new uploads use a **non-identifying path
+(random UUID)**, and the write-side policy moves off path-prefix identity — see
+`memory/anonymity-and-proximity-decisions.md`. Existing photos are untouched
+(all pre-4.5 posts are non-anonymous); the cross-user *read* policy above is
+scheme-agnostic and unaffected.
 
 ---
 
@@ -236,6 +324,17 @@ migrations so far:
 - `supabase/migrations/20260720115611_add_comments_table_and_trigger.sql`
   — the `comments` table, its RLS, and its `security definer` counter
   trigger, both in §2/§4.
+- `supabase/migrations/20260721043156_blocker.sql` — the `blocks` table and
+  its asymmetric RLS (§2/§4).
+- `supabase/migrations/20260721053057_block_exclusion_visibility.sql` — two-way
+  block exclusion added to `posts`' and `comments`' SELECT policies (§4).
+- `supabase/migrations/20260721053608_add_reports_table.sql` — the `reports`
+  table, insert-only RLS (§2/§4).
+- `supabase/migrations/20260721070228_photo_storage_cross_user_visibility.sql`
+  — the cross-user photo SELECT policy on `storage.objects` (§5).
+- `supabase/migrations/20260725141645_add_profiles_tier_and_posts_index.sql` —
+  `profiles.tier` (paywall insurance) and the `posts_user_id_created_at_idx`
+  index (§2).
 
 Everything before that (Phases 0–2: `posts`/`profiles` schema, the
 entry-window trigger and function in §3, storage bucket policies in §5) was
@@ -251,18 +350,32 @@ so drift like this doesn't recur.
 
 - **`moderation_status` workflow** — the column exists and is read by the
   Phase 3 RLS policy, but nothing sets or transitions it yet; no moderation
-  tooling exists (Phase 4/7).
-- **Rate limiting** beyond the one-post-per-`local_date` uniqueness
-  constraint.
-- **Admin role / `service_role`-based moderation tooling** (Phase 7).
+  tooling exists (Phase 7).
+- **Admin role / `service_role`-based moderation tooling** (Phase 7) — includes
+  the `reports` review/transition UI (data capture exists; reading them does
+  not).
 - **Proximity/geo queries** against `location` (Phase 5) — column exists,
-  unused.
-- **Replies** (2-level cap via `parent_comment_id`) — column exists on
-  `comments`, nothing writes to it yet; top-level comments only so far
-  (Phase 4, next concept after comments).
-- **Realtime updates** on the detail screen (Phase 4).
-- **Blocking** (`blocks` table + two-way RLS feed exclusion) and
-  **reporting** (`reports` table) — not started (Phase 4).
+  unused. Redesigned as **region-matching** (same state/country via bundled
+  boundaries + `ST_Contains`), not distance-radius — see
+  `memory/anonymity-and-proximity-decisions.md`.
+- **Anonymous posting** (Phase 4.5) — per-post toggle, hidden from other users
+  but not moderators, enforced **server-side** (a view, like `profiles_public`)
+  — see `memory/anonymity-and-proximity-decisions.md`.
+- **Friends** (Phase 4.7) — a `friendships` table with **two-way mutual accept**
+  (request→accept), + RLS, and a personal (non-cached) friends feed. Anonymous
+  posts appear in the friends feed as "Anonymous" (soft anonymity — accepted),
+  with a compose-time warning — see `memory/friends-feature-decisions.md`.
+- **Front server + Redis caching layer** (Phase 5.5) — see the caching
+  principles in the project guide (`memory/CLAUDE.md`).
+- **Rate limiting**: no per-request/per-minute limiter exists or is planned.
+  The only write throttle is `unique(user_id, local_date)` + the entry window;
+  there is **no rate-limit trigger** and **no `expires_at` column** (ephemerality
+  is the computed 36h RLS window, and posts are never deleted on expiry).
+
+**Now built (previously listed here as deferred):** replies (2-level cap),
+realtime — scoped down to 7s polling + pull-to-refresh, not WebSockets — and
+all of blocking and reporting. See §2/§4/§5 and
+`memory/project-phase-status.md`.
 
 ---
 
@@ -347,3 +460,38 @@ app UI, before wiring up any screen:
 - [x] `hooks/useComments.ts` + `components/CommentThread.tsx` — app-level:
       posting a comment appears in the thread, author fallback renders
       correctly. **Verified 2026-07-20** through the actual app.
+
+---
+
+## 9. Handoff reconciliation (2026-07-25)
+
+A planning doc from a separate session (`architecture-decisions-handoff.md`)
+proposed a front server + Redis layer and made several assumptions that **do
+not match this schema**. Recorded here so they aren't re-derived:
+
+- **No `ratings` table** — it's `posts`.
+- **No `expires_at` column, and posts are never deleted on expiry.**
+  Ephemerality is the computed RLS condition
+  `created_at > now() - interval '36 hours'`; expired posts freeze and drop out
+  of public view, the row persists, the author still sees it. So there is no
+  expiry-cascade for replies and no cache invalidation "tied to `expires_at`."
+- **No rate-limit trigger** ("section 4.2" does not exist). The only write
+  throttle is `unique(user_id, local_date)` + the entry window. A per-minute
+  limiter is the wrong fit for a once-daily journal and was dropped.
+- **No friends/follows feed** — a future idea in the spec, not a table or phase.
+- **Region feed / "Most popular" are unbuilt (Phase 5)** — don't design caches
+  for endpoints that don't exist yet.
+- **Storage is already private + signed URLs** (the handoff's "open question"
+  about public vs. signed is already decided — see §5), and **blocking is
+  already enforced in RLS** (§4).
+- **Shared-cache vs per-user RLS tension** (for the Phase 5.5 front server): a
+  truly shared feed cache can't come from a JWT-forwarded RLS query, because
+  blocking, self-exclusion, and anonymous posting make rows differ per
+  requester. Cache a pre-personalization superset via a `security definer` RPC
+  (never `service_role` for user requests) and personalize per request after
+  the cache read. See the caching principles in `memory/CLAUDE.md`.
+
+The sound parts of the handoff (JWT-forwarding keeps RLS the boundary, front
+server statelessness, the caching governing rule, `tier` as paywall insurance,
+secrets/error-shape/logging) are folded into `memory/CLAUDE.md` and this doc;
+the handoff can be retired.

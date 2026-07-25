@@ -9,6 +9,7 @@ type UpsertPostInput = {
   rating: number;
   message: string;
   photoUrl?: string | null;
+  isAnonymous: boolean;
 };
 
 export function useTodayPost(
@@ -60,6 +61,7 @@ export function useUpsertPost(): UseMutationResult<Post, PostgrestError, UpsertP
             message: input.message,
             photo_url: input.photoUrl ?? null,
             local_date: entryDate,
+            is_anonymous: input.isAnonymous,
           },
           { onConflict: 'user_id,local_date' }
         )
