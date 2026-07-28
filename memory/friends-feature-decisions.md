@@ -53,3 +53,56 @@ accept) + RLS, a `useFriendsFeed` hook (personal, no Redis, anon stripped via
 the per-viewer `case when is_anonymous and user_id <> auth.uid()` projection),
 and the compose-time anonymity warning. Confirm the phase slot with the user
 before starting.
+
+---
+
+## Concept 1 design, finalized 2026-07-28 (not yet built — schema/RLS only, ready to implement)
+
+Two tables, not one — pending requests and confirmed friendships are kept
+separate rather than a single table with a status column:
+
+- **`friend_requests(requester_id, addressee_id, created_at)`** — composite PK
+  `(requester_id, addressee_id)`, `check (requester_id <> addressee_id)`, plus
+  a **unique index on `(least(requester_id, addressee_id), greatest(requester_id, addressee_id))`**
+  so B can't insert a reverse-direction pending row while A→B is already
+  pending (same duplicate-pair problem `blocks` didn't have, since blocks are
+  legitimately directional and friend requests aren't). RLS: SELECT where
+  you're either party; INSERT only as `requester_id = auth.uid()`; DELETE
+  where you're either party (covers both reject and cancel-my-own-request).
+  **Product-layer note:** if B tries to request A while A→B is already
+  pending, the DB constraint will reject the raw insert — the *hook* should
+  check for a reverse pending row first and call accept instead of insert, so
+  this reads as "accepting" in the UI, not a raw 409.
+- **`friendships(user_id, friend_id, created_at)`** — composite PK
+  `(user_id, friend_id)`, `check (user_id <> friend_id)`. **Mirrored two rows
+  per accepted pair** (both `(A,B)` and `(B,A)`), chosen over a single
+  canonical `(least,greatest)` row deliberately: friend lists are read far
+  more often than friendships are created, and a plain `where user_id =
+  auth.uid()` indexed lookup beats an `OR`-across-two-columns query on every
+  future feed read. RLS: SELECT where `user_id = auth.uid()` only (you only
+  ever need to read your own row's `friend_id` column, never the mirrored
+  other-direction row). **No client-side INSERT/UPDATE/DELETE policy at
+  all** — rows can only be created/removed via the two RPCs below.
+- **`accept_friend_request(other_user_id uuid)`** — `security definer` RPC
+  (same bypass pattern as the `likes`/`comments` counter triggers): deletes
+  the matching `friend_requests` row, inserts both mirrored rows into
+  `friendships` in one transaction. Needed because crediting the *other*
+  user's side of the friendship isn't something a plain RLS insert policy
+  run as the accepting user can authorize.
+- **`remove_friendship(other_user_id uuid)`** — also `security definer`;
+  deletes *both* mirrored rows in one transaction. A plain client-side delete
+  would only remove the caller's own row and leave a dangling one-sided row.
+- **Re-request policy (decided 2026-07-28):** rejecting or unfriending just
+  `DELETE`s the row(s) — no `rejected`/`ended` status kept. A later request
+  between the same pair is a fresh `INSERT`, no history retained. Simpler,
+  matches how most social apps let you re-add someone you'd removed.
+
+**Why:** captured so the schema gets built exactly as designed rather than
+re-derived from scratch on a different machine — see the mirrored-row
+reasoning above (industry-standard trade-off for undirected/mutual graphs:
+pay 2x storage + one atomic write on the rare accept event, get every future
+read down to a trivial indexed lookup).
+
+**How to apply:** next step is writing the actual migration file (table
+DDL + RLS policies + the two RPC functions) following this exact shape — no
+further design decisions needed, this is ready to implement directly.
