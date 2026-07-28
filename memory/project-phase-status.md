@@ -181,4 +181,100 @@ Phase 4.5 (anonymous posting) **started 2026-07-25**. Design settled first acros
 - **Concept 5 ("Hide this post") built + verified in-app 2026-07-25 — Phase 4.5 COMPLETE.** `hooks/useHiddenPosts.ts`: `useHiddenPostsIds` (`useQuery` reading a JSON id array from AsyncStorage → `Set<string>`, key `['hiddenPosts']`) + `useHidePost` (`useMutation` appending an id + invalidating). `useExploreFeed` calls `useHiddenPostsIds()` at the top and its `select` filters `p.user_id !== userId && !hiddenIds?.has(p.id)` (both exclusions in the one `select`, so `getNextPageParam` still sees raw pages). Detail screen got a "Hide this post" `Pressable` (in the Report group, so it shows on anon posts where Block is hidden) that `mutate`s the id + `router.back()`. Local-only (per-device, permanent, no un-hide UI) — accepted MVP scope. Verified: hide → gone from Explore, still gone after app relaunch (AsyncStorage persisted).
   - **Bug parade this concept, all the recurring kinds**: (1) `Set<<string>` double-`<` typo + `String` (boxed) vs `string`; (2) hook wired *inside* `queryFn` then *at module top level* before finally landing inside the function body — the module-level version passed `tsc` but crashed at runtime ("No QueryClient set", `<global>` frame) because rules-of-hooks is a lint/runtime rule, not a type rule; (3) `router.back` missing `()` (2nd missing-parens bug after `Crypto.randomUUID`); (4) two adjacent JSX siblings needing a fragment; (5) `postQuery.data` narrowing lost inside the `onPress` closure → fixed by using the `const post` binding (const narrowing survives closures) — Claude applied this `[id].tsx` fix directly at user request; (6) `uploadPhoto` caller still passing 3 args (Concept 4 leftover) — ran in-app anyway because Metro/Babel strips types without checking, only `tsc --noEmit` caught it.
 
+---
+
+Phase 4.7 (friends) **started 2026-07-28**. Design was settled beforehand in
+`[[friends-feature-decisions]]`; this is the build log.
+
+- **Concept 1 (schema + RLS + the two RPCs) built + DB-verified 2026-07-28.**
+  Migration `supabase/migrations/20260728093817_friends.sql`: `friend_requests`
+  (composite PK, self-check, FKs to `profiles` on delete cascade) with a
+  **unique index over `(least(...), greatest(...))`** — the repo's first
+  expression index — plus `friend_requests_addressee_idx`; `friendships`
+  (mirrored two rows per pair, composite PK, self-check); and
+  `accept_friend_request` / `remove_friendship`, the repo's **first
+  client-callable RPCs** and first non-trigger `security definer` functions.
+  Written by the user under guide+review across ~6 review rounds.
+  - **The one security-critical thing here** is that `accept_friend_request`
+    does `delete from friend_requests ... ; if not found then raise` **before**
+    the insert. The first draft had insert-first with no `found` check at all,
+    which meant any authenticated user could `rpc('accept_friend_request',
+    { other_user_id: <stranger> })` and force a friendship — `security definer`
+    turns RLS off inside the body, and a `DELETE` matching zero rows is not an
+    error. **Explicitly attack-tested**, not assumed (cases 11–13 below).
+  - **Verified DB-level via REST, 27/27**
+    (`scratchpad/verify_friends.py`, dummy1probe/dummy2/dummy3 as A/B/C):
+    self-request → `23514`; duplicate A→B → `23505`; **reverse B→A while A→B
+    pending → `23505`** (proves the expression index); forged `requester_id` →
+    `403`; both parties see the request, a third account gets `[]`; reject and
+    cancel both `204`; **force-friend with no request → `P0001`, zero rows
+    created**; **requester self-accepting their own outbound → `P0001`**
+    (proves the predicate is directional); real accept → request consumed +
+    both mirrored rows present; double-accept → `P0001`; unfriend → **both**
+    mirror rows gone; unfriending a non-friend → silent `204`; re-request after
+    unfriend → `201` (no tombstone); anon/no-JWT calls to both RPCs → `403`
+    with `28000` from the null-`v_uid` guard.
+  - **Real finding that corrects a plan assumption: the per-verb `grant` lines
+    in this repo's migrations do not actually restrict anything on the remote
+    project.** Verified directly: `reports` was granted **insert only**, yet a
+    `SELECT` returns `200 []` and a `DELETE` returns `204`; `blocks` accepts an
+    `UPDATE` (`204`) despite having no update grant and no update policy. So
+    `authenticated` holds broad table privileges regardless of the migration's
+    grants, and **RLS is the sole enforcement layer** — `enable row level
+    security` plus the set of policies is doing 100% of the work on every
+    table. Consequence for `friendships`: it is genuinely locked (verified —
+    a direct `DELETE`/`PATCH` affects **zero rows** and both mirror rows
+    survive; a direct `INSERT` → `403` `42501` RLS violation), but it's locked
+    by *no policy existing*, not by the `select`-only grant. The "two
+    independent layers" framing in the plan was wrong. Keep writing the narrow
+    grants (they document intent and are correct locally, where
+    `auto_expose_new_tables` is unset), but never rely on one as a security
+    boundary.
+  - **Also worth remembering: RLS denies UPDATE/DELETE silently.** With RLS on
+    and no policy for that verb, the operation matches zero rows and returns
+    `204` — it does *not* error. Only INSERT raises (`42501`, "new row violates
+    row-level security policy"). A verification case that asserts `403` for a
+    blocked DELETE will fail even when the table is correctly locked; assert on
+    **row counts before/after**, not the status code. This cost one false
+    alarm during verification.
+  - **Bug parade during the build, all the recurring kinds**: skeleton
+    placeholders pasted literally (`...` and a `-- see plan` pointer became
+    file content, leaving both tables with *no columns declared* — 3rd instance
+    of this pattern after `blocker.sql`'s prose-as-SQL and the `posts_feed`
+    `...`); missing comma before a table-level `check` (twice, once per table);
+    `timestampz` for `timestamptz` (twice); `onconflict` as one word (survived
+    3 review rounds — a missing space is near-invisible on reread); function
+    modifiers duplicated on both the signature line and after the body
+    (`conflicting or redundant options`); and then, fixing that, the trailing
+    `$$;` terminator deleted entirely rather than trimmed — which swallowed the
+    rest of the file into an unterminated dollar-quoted string, an error that
+    reports at EOF rather than at the actual line.
+  - `types/database.ts` regenerated (via Bash, per the UTF-16 gotcha — output
+    confirmed ASCII); `accept_friend_request` / `remove_friendship` both land
+    as `{ Args: { other_user_id: string }; Returns: undefined }`. Full project
+    `tsc --noEmit` clean.
+  - **Docs done 2026-07-28**: `docs/database-architecture.md` gained §2 table
+    blocks for both tables, a §4 RLS + RPC subsection (including the grants
+    correction and the silent-UPDATE/DELETE trap as a blockquote), §6 migration
+    entries, a §7 rewrite splitting "friends feed/hooks still deferred" from
+    the new "blocks do not gate friend requests" bullet, and a §8 checklist
+    entry. Two **pre-existing gaps in §6 fixed while there** — the migration
+    list was missing `20260725080735` and `20260725150000` entirely.
+  - **`ANONYMOUS_POST_WARNING` extended** (`constants/posts.ts`) with the
+    friends-feed clause that Phase 4.5 deliberately held back until the friends
+    schema existed: "Anonymous posts still reach the feeds of people you are
+    friends with, where a small circle can make them easy to guess." This was
+    the **required mitigation** agreed when soft anonymity among friends
+    (Option B) was chosen — see `[[friends-feature-decisions]]`.
+  - **Deferred deliberately (user's call): blocks do not gate friend
+    requests** — Phase 7. Note the gap is wider than it sounds: blocking also
+    doesn't sever an existing friendship or pending request, and neither
+    `friendships` RLS nor `profiles_public` carries a block clause, so a
+    blocked ex-friend stays visible *as a friend* with name and avatar. Post
+    content is already safe via `posts`' own policy, so it's an identity leak,
+    not a content leak. Right fix is an `after insert on blocks` trigger, not
+    a `not exists` bolted onto every future friends read.
+
+---
+
 **Phase 4.5 pushed to GitHub 2026-07-25** — commit `fe4603f` on `main` (19 files: the 3 migrations, hooks, components, screens, types, docs). **Deliberately excluded from the commit** (pre-existing, not this session's work): `app.json` + `package.json`/`package-lock.json` modifications (present at session start), and the root deletions of `CLAUDE.md` + `daily-rating-social-app-spec.md` (those files now live in the gitignored `memory/`; committing the deletions is the user's call, not made). `memory/` is gitignored, so none of the build-log/decision records are in the repo.

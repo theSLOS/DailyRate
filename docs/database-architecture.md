@@ -135,6 +135,36 @@ created_at   timestamptz default now()
 
 RLS enabled — insert-only for regular users, no select/update/delete (§4). The admin review workflow (reading/transitioning reports) is deferred; data capture exists now.
 
+```sql
+-- friend_requests (Phase 4.7)
+requester_id  uuid not null references profiles(id) on delete cascade
+addressee_id  uuid not null references profiles(id) on delete cascade
+created_at    timestamptz not null default now()
+
+primary key (requester_id, addressee_id)   -- composite PK, no surrogate id: a request is addressed by its pair
+check (requester_id <> addressee_id)       -- self-friending impossible at the DB layer
+
+unique index friend_requests_pair_idx on (least(requester_id, addressee_id), greatest(requester_id, addressee_id))
+                                           -- first expression index in the repo; the PK stops a duplicate A→B,
+                                           -- this stops a reverse B→A while A→B is still pending
+index friend_requests_addressee_idx on (addressee_id)
+                                           -- "requests sent to me" — the PK's index can't serve it (wrong leading column)
+```
+
+A **pending queue, not a relationship**: directional, and every row is destined for deletion (accept consumes it, reject/cancel deletes it). Unlike `blocks` — which is superficially the same two-uuid shape — friend requests are *not* legitimately directional as a pair, which is the entire reason for the normalising unique index. RLS enabled; see §4.
+
+```sql
+-- friendships (Phase 4.7)
+user_id     uuid not null references profiles(id) on delete cascade
+friend_id   uuid not null references profiles(id) on delete cascade
+created_at  timestamptz not null default now()
+
+primary key (user_id, friend_id)   -- composite PK, no surrogate id
+check (user_id <> friend_id)       -- guards against a bug in the accept RPC, not against a client (no client write path exists)
+```
+
+**Mirrored: two rows per accepted pair**, both `(A,B)` and `(B,A)`. Deliberate trade-off for an undirected graph — pay 2× storage and one atomic two-row write on the rare accept event, so every friend-list read (which happens on every friends-feed load) is a trivial `where user_id = auth.uid()` index scan instead of an `OR` across two columns. Has **no client write path at all**: mutations only happen through the two `security definer` RPCs in §4.
+
 ---
 
 ## 3. Entry-window rule
@@ -275,6 +305,84 @@ the reporter (an `exists` against `posts` or `comments` by `target_type`),
 which transitively inherits both the 36h window and the block exclusion for
 free. The admin review UI is deferred; only data capture exists now.
 
+**`friend_requests` (Phase 4.7):**
+- SELECT: `requester_id = auth.uid() or addressee_id = auth.uid()` — **either
+  party**. Both directions are needed: you must see requests sent *to* you to
+  act on them, and requests *from* you to cancel them. Verified a third,
+  uninvolved account gets `[]`.
+- INSERT: `requester_id = auth.uid()` — you can't fabricate a request from
+  someone else.
+- DELETE: **either party**, one policy covering both "reject the request sent
+  to me" and "cancel the request I sent" — they're the same row operation seen
+  from opposite ends.
+- No UPDATE policy (a request either exists or it doesn't).
+
+**`friendships` (Phase 4.7):**
+- SELECT: `user_id = auth.uid()` **only**. You read your own row's `friend_id`;
+  you never need the mirrored other-direction row. Keeping this narrow is what
+  makes the mirrored design pay off — the friend-list read never needs an `OR`.
+- **No INSERT, UPDATE or DELETE policy at all.** This is the table's entire
+  security model: mutation is impossible from a client because no policy
+  authorises it, and the only writers are the two RPCs below. Verified — a
+  direct `DELETE`/`PATCH` affects **zero rows** (both mirror rows survive) and
+  a direct `INSERT` returns `42501`.
+
+**`accept_friend_request(other_user_id)` / `remove_friendship(other_user_id)`
+(Phase 4.7):** both `security definer` with `set search_path = public` — the
+repo's **first client-callable RPCs** and first non-trigger use of the pattern.
+The bypass is required because both operations must write the *other* user's
+row (`friendships` is mirrored), which no policy running as the calling user
+can authorise. The critical consequence: `security definer` turns RLS off
+inside the body, so **the function body is the only access check that exists**.
+
+- `accept_friend_request` **deletes the `friend_requests` row first, then
+  checks `found`, and only then inserts.** The delete *is* the authorization
+  check — if it matched nothing, no request existed and the caller has no
+  right to be there (`raise ... errcode = 'P0001'`). Ordering also matters for
+  concurrency: `DELETE` takes the row lock, so exactly one of two simultaneous
+  callers wins; insert-first would let both reach the insert and collide on the
+  PK. A `select ... exists` pre-check would be wrong — `SELECT` takes no row
+  lock under READ COMMITTED, leaving a TOCTOU gap.
+  - The predicate is **strictly directional** (`requester_id = other_user_id
+    and addressee_id = auth.uid()`), so you can only accept a request sent *to*
+    you. A symmetric predicate would let a requester accept their own outbound
+    request and self-serve a friendship — collapsing mutual consent into a
+    one-way follow. **Attack-tested both ways** (force-friend with no request,
+    and requester self-accepting): both correctly raise `P0001`.
+  - `on conflict do nothing` on the mirrored insert guards a stranding case: a
+    request can exist between two people who are already friends, and without
+    it the PK collision would roll back the delete too, leaving that request
+    permanently unacceptable.
+- `remove_friendship` uses a **symmetric** predicate, which is correct *here*
+  because every disjunct pins one side to `auth.uid()` — the caller can only
+  delete a pair they belong to. No `found` guard: unfriending a non-friend is a
+  deliberate silent no-op, since there's no precondition the user needs told
+  about (unlike accept).
+- Both carry a null-`auth.uid()` guard (`errcode = '28000'`). Both are
+  `revoke execute ... from public` then `grant execute ... to authenticated` —
+  necessary because **`CREATE FUNCTION` grants EXECUTE to PUBLIC by default**,
+  which would otherwise expose a `security definer` function to `anon`. No
+  earlier migration needed this, because the repo's only other functions are
+  triggers that nothing calls directly.
+
+> **Important correction to the mental model of `grant` in this repo
+> (verified 2026-07-28).** The per-verb `grant` lines in these migrations do
+> **not** restrict anything on the remote project: `reports` was granted
+> *insert only*, yet a `SELECT` returns `200 []` and a `DELETE` returns `204`;
+> `blocks` accepts an `UPDATE` despite having neither an update grant nor an
+> update policy. `authenticated` holds broad table privileges regardless, so
+> **RLS is the sole enforcement layer** — `enable row level security` plus the
+> set of policies does 100% of the work on every table. Keep writing narrow
+> grants (they document intent, and they do bind locally where
+> `auto_expose_new_tables` is unset in `supabase/config.toml`), but never treat
+> one as a security boundary.
+>
+> Related trap when verifying: **RLS denies UPDATE/DELETE silently.** With RLS
+> on and no policy for that verb, the operation matches zero rows and returns
+> `204` — it does not error. Only INSERT raises (`42501`, "new row violates
+> row-level security policy"). Assert on **row counts before/after**, not on
+> status codes, when testing that a write is blocked.
+
 ---
 
 ## 5. Storage
@@ -332,9 +440,17 @@ migrations so far:
   table, insert-only RLS (§2/§4).
 - `supabase/migrations/20260721070228_photo_storage_cross_user_visibility.sql`
   — the cross-user photo SELECT policy on `storage.objects` (§5).
+- `supabase/migrations/20260725080735_anon_photo_path_rework.sql` — the
+  bucket-scoped upload policy on `storage.objects` and the `create or replace`
+  of `posts_feed` that stops nulling `photo_url` (§2/§5).
 - `supabase/migrations/20260725141645_add_profiles_tier_and_posts_index.sql` —
   `profiles.tier` (paywall insurance) and the `posts_user_id_created_at_idx`
   index (§2).
+- `supabase/migrations/20260725150000_add_is_anonymous_and_posts_feed_view.sql`
+  — `posts.is_anonymous` and the `security_invoker` `posts_feed` view (§2/§4).
+- `supabase/migrations/20260728093817_friends.sql` — the `friend_requests` and
+  `friendships` tables, their RLS, and the `accept_friend_request` /
+  `remove_friendship` `security definer` RPCs (§2/§4).
 
 Everything before that (Phases 0–2: `posts`/`profiles` schema, the
 entry-window trigger and function in §3, storage bucket policies in §5) was
@@ -361,10 +477,25 @@ so drift like this doesn't recur.
 - **Anonymous posting** (Phase 4.5) — per-post toggle, hidden from other users
   but not moderators, enforced **server-side** (a view, like `profiles_public`)
   — see `memory/anonymity-and-proximity-decisions.md`.
-- **Friends** (Phase 4.7) — a `friendships` table with **two-way mutual accept**
-  (request→accept), + RLS, and a personal (non-cached) friends feed. Anonymous
-  posts appear in the friends feed as "Anonymous" (soft anonymity — accepted),
-  with a compose-time warning — see `memory/friends-feature-decisions.md`.
+- **Friends feed and hooks** (Phase 4.7, later concepts) — the schema, RLS and
+  RPCs are **built** (§2/§4); what remains is the client side: a `useFriends`
+  hook, the request/accept UI, and the personal (non-cached, no Redis) friends
+  feed. Anonymous posts will appear there as "Anonymous" — soft anonymity,
+  deliberately accepted — see `memory/friends-feature-decisions.md`.
+- **Blocks do not gate friend requests** (Phase 7) — a blocked user can
+  currently send a friend request to the person who blocked them, and since
+  `friend_requests`' SELECT policy is "either party", it lands in the blocker's
+  incoming list. Wider than it sounds: blocking also does **not** sever an
+  existing friendship or pending request, and neither `friendships`' RLS nor
+  the `profiles_public` view carries a block clause, so a blocked ex-friend
+  stays visible *as a friend* with username, display name and avatar. Post
+  content is already safe (`posts`' own SELECT policy carries the bidirectional
+  block exclusion), so this is an **identity** leak, not a content leak. The
+  right fix is an `after insert on blocks` trigger that deletes the mirrored
+  `friendships` rows and any `friend_requests` row for the pair — cleaning up
+  once on a rare event, rather than carrying a `not exists blocks` clause into
+  every friends-list and friends-feed read forever. Deliberately deferred, not
+  an oversight.
 - **Front server + Redis caching layer** (Phase 5.5) — see the caching
   principles in the project guide (`memory/CLAUDE.md`).
 - **Rate limiting**: no per-request/per-minute limiter exists or is planned.
@@ -373,8 +504,10 @@ so drift like this doesn't recur.
   is the computed 36h RLS window, and posts are never deleted on expiry).
 
 **Now built (previously listed here as deferred):** replies (2-level cap),
-realtime — scoped down to 7s polling + pull-to-refresh, not WebSockets — and
-all of blocking and reporting. See §2/§4/§5 and
+realtime — scoped down to 7s polling + pull-to-refresh, not WebSockets —
+all of blocking and reporting, anonymous posting (`posts.is_anonymous` + the
+`posts_feed` view), and the **friends schema** (`friend_requests`,
+`friendships`, and the two `security definer` RPCs). See §2/§4/§5 and
 `memory/project-phase-status.md`.
 
 ---
@@ -460,6 +593,25 @@ app UI, before wiring up any screen:
 - [x] `hooks/useComments.ts` + `components/CommentThread.tsx` — app-level:
       posting a comment appears in the thread, author fallback renders
       correctly. **Verified 2026-07-20** through the actual app.
+- [x] `friend_requests` / `friendships` + both RPCs — **Verified 2026-07-28**,
+      DB-level via REST with three dummy accounts (A/B/C), 27/27 cases
+      (`scratchpad/verify_friends.py`). Constraints: self-request → `23514`;
+      duplicate A→B → `23505`; **reverse B→A while A→B pending → `23505`**,
+      proving the `(least, greatest)` expression index. RLS: forged
+      `requester_id` → `403`; both parties see the request, an uninvolved
+      third account gets `[]`; reject and cancel both `204`. The two attacks
+      the `security definer` design exists to stop, tested explicitly and
+      both correctly raising `P0001`: **force-friend with no request in
+      existence** (zero rows created), and **a requester self-accepting their
+      own outbound request** (proving the predicate is directional). Happy
+      path: request consumed + *both* mirror rows present; double-accept →
+      `P0001`; unfriend removes **both** mirror rows; unfriending a non-friend
+      is a silent `204`; re-request after unfriend → `201` (no tombstone).
+      Anon/no-JWT calls to both RPCs → `403`/`28000`, confirming the
+      `revoke execute ... from public`. `friendships` lockdown confirmed by
+      **row count, not status code** (see the §4 note): a direct `DELETE` and
+      `PATCH` each affect zero rows with both mirrors surviving; direct
+      `INSERT` → `42501`.
 
 ---
 
