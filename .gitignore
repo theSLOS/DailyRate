@@ -44,6 +44,14 @@ yarn-error.*
 # Supabase CLI local cache
 supabase/.temp/
 
-# Claude collaboration memory (local session notes, not project docs)
-/memory/
+# Claude collaboration memory — personal notes stay local, project docs are tracked.
+# Default-ignore everything in memory/, then allowlist the shareable project docs.
+/memory/*
+!/memory/daily-rating-social-app-spec.md
+!/memory/anonymity-and-proximity-decisions.md
+!/memory/front-server-caching-decisions.md
+!/memory/friends-feature-decisions.md
+!/memory/project-phase-status.md
+!/memory/CLAUDE.md
+!/memory/MEMORY.md
 /docs/codebase-walkthrough.md
