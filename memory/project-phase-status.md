@@ -266,6 +266,10 @@ Phase 4.7 (friends) **started 2026-07-28**. Design was settled beforehand in
     friends with, where a small circle can make them easy to guess." This was
     the **required mitigation** agreed when soft anonymity among friends
     (Option B) was chosen — see `[[friends-feature-decisions]]`.
+  - **Pushed to GitHub 2026-07-28** — commit `4114f7c` on `main` (6 files: the
+    migration, regenerated types, the architecture doc, the warning copy, and
+    this log). Unlike Phase 4.5, `memory/` is now tracked, so the build log and
+    decision records ship with the repo.
   - **Deferred deliberately (user's call): blocks do not gate friend
     requests** — Phase 7. Note the gap is wider than it sounds: blocking also
     doesn't sever an existing friendship or pending request, and neither
