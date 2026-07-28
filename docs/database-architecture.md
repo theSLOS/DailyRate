@@ -124,7 +124,7 @@ RLS enabled — see §4 for its deliberately asymmetric policy (you can see who 
 -- reports (Phase 4)
 id           uuid primary key default gen_random_uuid()
 reporter_id  uuid references profiles(id) not null
-target_type  text not null   -- check: 'post' | 'comment'
+target_type  text not null   -- check: 'post' | 'comment' | 'user'  ('user' added Phase 4.7)
 target_id    uuid not null   -- polymorphic across posts/comments — deliberately NO FK
 reason       text
 status       text default 'pending'   -- check: 'pending' | 'reviewed' | 'dismissed'
@@ -298,12 +298,25 @@ deliberate privacy decision; verified: the blocked user's `select *` returns
 `[]`, not a permission error and not the row). INSERT/DELETE are both gated by
 `blocker_id = auth.uid()`; no UPDATE policy (a block either exists or doesn't).
 
-**`reports` (Phase 4):** **insert-only for regular users — no SELECT, UPDATE,
-or DELETE policy at all** (the reporter can't even read their own reports back).
-The insert `with check` requires the reported target to actually be visible to
-the reporter (an `exists` against `posts` or `comments` by `target_type`),
-which transitively inherits both the 36h window and the block exclusion for
-free. The admin review UI is deferred; only data capture exists now.
+**`reports` (Phase 4, widened Phase 4.7):** **insert-only for regular users — no
+SELECT, UPDATE, or DELETE policy at all** (the reporter can't even read their own
+reports back). The insert `with check` branches on `target_type`, and the three
+branches do **not** all mean the same thing:
+- `'post'` / `'comment'` — an `exists` against `posts` / `comments`, which
+  transitively inherits both the 36h window and the block exclusion. Here the
+  check really is a *visibility* gate.
+- `'user'` (Phase 4.7) — an `exists` against **`profiles_public`**, plus
+  `target_id <> auth.uid()`. This is an **existence check, not a visibility
+  check**: `profiles_public` carries no window and no block clause, so a user
+  stays reportable even if they have blocked you. Deliberate — otherwise
+  blocking someone would make you unreportable by them.
+- It must reference `profiles_public`, **never `profiles`**. A policy subquery
+  runs as the invoker and `profiles` RLS is owner-only, so `exists (select 1 from
+  profiles ...)` would match only the reporter's own row — silently rejecting
+  every report of another user while allowing self-reports. Verified both
+  directions 2026-07-28 (see §8).
+
+The admin review UI is deferred; only data capture exists now.
 
 **`friend_requests` (Phase 4.7):**
 - SELECT: `requester_id = auth.uid() or addressee_id = auth.uid()` — **either
@@ -360,10 +373,34 @@ inside the body, so **the function body is the only access check that exists**.
   about (unlike accept).
 - Both carry a null-`auth.uid()` guard (`errcode = '28000'`). Both are
   `revoke execute ... from public` then `grant execute ... to authenticated` —
-  necessary because **`CREATE FUNCTION` grants EXECUTE to PUBLIC by default**,
-  which would otherwise expose a `security definer` function to `anon`. No
-  earlier migration needed this, because the repo's only other functions are
-  triggers that nothing calls directly.
+  because **`CREATE FUNCTION` grants EXECUTE to PUBLIC by default**. No earlier
+  migration needed this, since the repo's only other functions are triggers that
+  nothing calls directly.
+
+**`friend_count(target_user_id)` (Phase 4.7):** also `security definer`, for a
+different reason from the two above — it isn't writing anything, it's *reading*
+past `friendships`' `user_id = auth.uid()` SELECT policy, which makes another
+user's count unreadable by any query a client could write. Because the table is
+mirrored, `count(*) where user_id = <them>` is exactly their friend count with no
+`OR`. `plpgsql` rather than `language sql` specifically so it can `raise` the
+null-`auth.uid()` guard. Publishes a **count, never a list** — friend identities
+stay behind the unchanged policy, verified both ways in §8. See §7 for the
+accepted inference channel.
+
+> **Correction (verified 2026-07-28): the `revoke execute ... from public` does
+> not actually bind `anon` on this project.** An anon call to either RPC returns
+> `28000` — which is raised from *inside* the function body, meaning the call got
+> past the EXECUTE check. If the revoke were binding, it would fail at the
+> privilege check with `42501` and never reach the body. Confirmed directly:
+> `get_entry_date`, which has no revoke and no guard, executes fine as `anon` and
+> returns a result. So `anon` holds EXECUTE on public functions independently of
+> the `PUBLIC` pseudo-role — the same root cause as the table-grants finding
+> below.
+>
+> **Consequence: the in-body `auth.uid() is null` guard is the only thing keeping
+> `anon` out of these functions.** Keep writing the revoke — it is correct,
+> portable and free — but never let it be the sole defence. Every `security
+> definer` function in this project needs the guard.
 
 > **Important correction to the mental model of `grant` in this repo
 > (verified 2026-07-28).** The per-verb `grant` lines in these migrations do
@@ -451,6 +488,11 @@ migrations so far:
 - `supabase/migrations/20260728093817_friends.sql` — the `friend_requests` and
   `friendships` tables, their RLS, and the `accept_friend_request` /
   `remove_friendship` `security definer` RPCs (§2/§4).
+- `supabase/migrations/20260728110551_user_add_to_reports.sql` — widens
+  `reports.target_type` to allow `'user'` and rewrites the insert policy with a
+  third branch (§2/§4).
+- `supabase/migrations/20260728110736_friend_count.sql` — the `friend_count`
+  `security definer` function (§4/§7).
 
 Everything before that (Phases 0–2: `posts`/`profiles` schema, the
 entry-window trigger and function in §3, storage bucket policies in §5) was
@@ -495,7 +537,36 @@ so drift like this doesn't recur.
   `friendships` rows and any `friend_requests` row for the pair — cleaning up
   once on a rare event, rather than carrying a `not exists blocks` clause into
   every friends-list and friends-feed read forever. Deliberately deferred, not
-  an oversight.
+  an oversight. `friend_count` (Phase 4.7) extends the same gap by one step —
+  it has no block awareness either, so someone you blocked can read your count.
+  Note the planned trigger fixes this for free: deleting the mirrored rows makes
+  the count change, with no code change needed here.
+- **`friend_count` is an edge-*creation* channel under polling** (Phase 4.7,
+  accepted). Poll it for a set of users on a timer; when two counts increment in
+  the same window, those two almost certainly just became friends, and
+  decrements pair the same way on unfriend. That reconstructs part of a graph
+  `friendships`' RLS deliberately refuses to serve. This app already polls every
+  7s by design, so the client-side machinery exists. Accepted because public
+  friend counts are near-universal and the attack needs sustained targeted
+  polling — but recorded, not unexamined. If it ever needs to be cheaper, bucket
+  the return (`0`, `1-5`, `6-20`, `20+`); that kills the correlation channel and
+  is confined to this one function. Related standing rule: **never map
+  `friend_count` over a list** — a friends list rendering "N friends" per row is
+  an N+1 of RPC round trips, and that's the trigger to move to a denormalized
+  `profiles.friend_count` column with a counter trigger, the `posts.like_count`
+  pattern.
+- **`profiles_public` is readable by `anon`, unauthenticated** (found
+  2026-07-28, pre-existing since `20260713092053`, **not yet decided**). A
+  `GET /rest/v1/profiles_public` carrying only the publishable key and no
+  `Authorization` header returns real rows — ids, usernames, display names,
+  avatars. Every RLS-protected *table* correctly returns `[]` to anon (their
+  policies all reference `auth.uid()`, which is null), but `profiles_public` is a
+  plain view with no `security_invoker` and no `auth.uid()` check anywhere, so
+  nothing gates it. **This means the full user directory is world-readable to
+  anyone holding the publishable key, which ships in the Expo bundle** — and it
+  contradicts §1's claim that anon sees nothing. Needs a deliberate call: accept
+  it and correct §1, or add `security_invoker` / an `auth.uid() is not null`
+  gate. Weigh that this is an app whose headline feature is anonymous posting.
 - **Front server + Redis caching layer** (Phase 5.5) — see the caching
   principles in the project guide (`memory/CLAUDE.md`).
 - **Rate limiting**: no per-request/per-minute limiter exists or is planned.
@@ -607,11 +678,31 @@ app UI, before wiring up any screen:
       path: request consumed + *both* mirror rows present; double-accept →
       `P0001`; unfriend removes **both** mirror rows; unfriending a non-friend
       is a silent `204`; re-request after unfriend → `201` (no tombstone).
-      Anon/no-JWT calls to both RPCs → `403`/`28000`, confirming the
-      `revoke execute ... from public`. `friendships` lockdown confirmed by
+      Anon/no-JWT calls to both RPCs → `403`/`28000`. **Corrected 2026-07-28:
+      that is the in-body guard firing, NOT the `revoke` — a bound revoke would
+      give `42501` before the body ran. See the correction note in §4.**
+      `friendships` lockdown confirmed by
       **row count, not status code** (see the §4 note): a direct `DELETE` and
       `PATCH` each affect zero rows with both mirrors surviving; direct
       `INSERT` → `42501`.
+- [x] `reports` `'user'` target type + `friend_count` — **Verified 2026-07-28**,
+      DB-level via REST with three dummy accounts, 16/16
+      (`scratchpad/verify_reports_and_count.py`). New behaviour: reporting
+      another user → `201`; **self-report → `403`** (the `target_id <>
+      auth.uid()` clause); nonexistent uuid → `403` (the `profiles_public`
+      existence check). Those first two are a **matched pair** and neither alone
+      is diagnostic — had the policy referenced `profiles` instead of
+      `profiles_public`, case 1 would fail *and* case 2 would succeed.
+      **Regression checks on the recreated policy** (it was dropped and rebuilt,
+      so this mattered more than the new feature): post reports, comment
+      reports, nonexistent-post rejection, impersonated `reporter_id` → `403`,
+      and reports still unreadable by their reporter — all unchanged. An
+      unrecognised `target_type` is rejected by RLS (`42501`) before the check
+      constraint sees it, same as Phase 4 found. `friend_count`: both parties'
+      counts move 0→1 on accept and back on unfriend; **a third account can read
+      the count but still gets `[]` for the friend list** — the public-count /
+      private-edges boundary, which needs both assertions to demonstrate; a
+      nonexistent uuid returns `0`, so it is not a user-existence oracle.
 
 ---
 

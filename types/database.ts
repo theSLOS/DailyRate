@@ -737,6 +737,7 @@ export type Database = {
         | { Args: { table_name: string }; Returns: string };
       enablelongtransactions: { Args: never; Returns: string };
       equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean };
+      friend_count: { Args: { target_user_id: string }; Returns: number };
       geometry: { Args: { '': string }; Returns: unknown };
       geometry_above: {
         Args: { geom1: unknown; geom2: unknown };

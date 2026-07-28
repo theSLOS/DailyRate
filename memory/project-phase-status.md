@@ -271,7 +271,73 @@ Phase 4.7 (friends) **started 2026-07-28**. Design was settled beforehand in
     this log). Unlike Phase 4.5, `memory/` is now tracked, so the build log and
     decision records ship with the repo.
   - **Deferred deliberately (user's call): blocks do not gate friend
-    requests** — Phase 7. Note the gap is wider than it sounds: blocking also
+    requests** — Phase 7.
+
+- **Concept 2 started 2026-07-28** — the client side. Plan (schema prereqs →
+  hooks → profile screen → profile tab → requests screen → nav entry points)
+  lives at `C:\Users\user\.claude\plans\yep-plan-the-nxt-misty-taco.md`, which
+  is **outside the repo and per-machine** — the durable decisions are copied
+  here and into `docs/database-architecture.md`. User's calls at planning time:
+  reporting a user is in scope, friend count is in scope, the history tab
+  becomes `app/(tabs)/profile.tsx`, blocks still deferred to Phase 7.
+  - **Step 1 (two migrations) built + DB-verified 16/16, pushed.**
+    `20260728110551_user_add_to_reports.sql` widens `reports.target_type` to
+    allow `'user'` and rewrites the insert policy with a third branch;
+    `20260728110736_friend_count.sql` adds the `friend_count` RPC. Split into
+    two files deliberately per sub-phase discipline — one rewrites an existing
+    policy (regression risk), the other adds a function.
+  - **Three findings from this step, all recorded in
+    `docs/database-architecture.md`:**
+    1. **The `revoke execute ... from public` does NOT bind `anon` on this
+       project, and Concept 1's §8 note claiming it did was wrong.** An anon
+       call returns `28000`, which is raised *inside* the function body — a
+       bound revoke would give `42501` before the body ran. Confirmed with
+       `get_entry_date` (no revoke, no guard) executing fine as anon. **The
+       in-body null-`auth.uid()` guard is the only thing keeping anon out of
+       every RPC here.** Same root cause as the Concept 1 table-grants finding.
+    2. **`profiles_public` is readable by `anon` unauthenticated** —
+       pre-existing since `20260713092053`, contradicts §1, **not yet decided**.
+       The full user directory is world-readable to anyone with the publishable
+       key, which ships in the Expo bundle.
+    3. **The reports `'user'` branch must reference `profiles_public`, never
+       `profiles`.** A policy subquery runs as the invoker and `profiles` RLS is
+       owner-only, so the `profiles` version would silently allow *only*
+       self-reports and reject every real one. Tested as a matched pair; neither
+       case alone is diagnostic.
+  - **Step 2 (hooks) built, `tsc` + ESLint clean, not yet runtime-tested** —
+    nothing imports them until the screens exist. `hooks/useFriends.ts`:
+    `useFriendRequests` / `useFriendsIds` / `useFriendCount` / `useFriendStatus`
+    (derived, composes the other three plus `useBlockStatus`, returns a
+    seven-member union with `'unknown'` as a real member so a caller can't
+    forget the loading case) + `useSendFriendRequest` /
+    `useDeleteFriendRequest` (one hook for both reject and cancel — same row
+    delete, one DB policy) / `useAcceptFriendRequest` / `useRemoveFriendship`.
+    New `types/friends.ts` for the generated row aliases + `FriendStatus`.
+    First `supabase.rpc(...)` calls in the codebase.
+  - **Invalidation is simpler than planned**: `invalidateQueries({ queryKey:
+    ['friends'] })` prefix-matches, so it catches the friend-id set *and* every
+    cached `['friends', { count }]` in one call — no need to enumerate both
+    parties' counts. Accept is the only mutation touching two namespaces.
+    **No optimistic updates**, deliberately: friend actions are rare and
+    latency-tolerant, and accept can legitimately fail with `P0001` on a race.
+  - **`as` hid three separate real bugs in `useFriends.ts` during this step**,
+    which is worth treating as a local rule — in this codebase a cast next to a
+    Supabase result is almost always covering something:
+    1. A hand-written type asserting an `id` column that **doesn't exist**
+       (`friend_requests` is a composite PK, no surrogate id) — so `item.id`
+       would be `undefined` at runtime with no type error.
+    2. **`GenericStringError`** — supabase-js parses `.select()` strings *at the
+       type level* using template-literal types, which requires a string
+       **literal**. The select was built with `'a' + 'b'` concatenation;
+       TypeScript doesn't constant-fold `+`, so the parser got an opaque
+       `string`, gave up, and typed the result as `GenericStringError[]`. The
+       cast was the only thing giving `data` any type at all. **Fix: keep
+       Supabase select strings as single literals — no concatenation, no
+       variables, no conditional building**, or type inference silently dies.
+    3. `const { count } = await supabase.rpc(...)` — `rpc()` resolves to
+       `{ data, error }`; `count` is the row-count header and is only populated
+       by a `select` with `{ count: 'exact' }`. It was returning `null` while
+       typed `number`. Note the gap is wider than it sounds: blocking also
     doesn't sever an existing friendship or pending request, and neither
     `friendships` RLS nor `profiles_public` carries a block clause, so a
     blocked ex-friend stays visible *as a friend* with name and avatar. Post
