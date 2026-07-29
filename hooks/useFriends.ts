@@ -9,12 +9,16 @@ import { supabase } from '@/lib/supabase';
 import type { PostgrestError } from '@supabase/supabase-js';
 
 import { useBlockStatus } from '@/hooks/useBlocks';
-import type { FriendRequest, FriendStatus } from '@/types/friends';
+import type { FriendRequest, Friendship, FriendStatus } from '@/types/friends';
 import type { ProfilePublicRow } from '@/types/posts';
 
 export type FriendRequestWithProfiles = FriendRequest & {
   requester: Pick<ProfilePublicRow, 'id' | 'username' | 'display_name' | 'avatar_url'>;
   addressee: Pick<ProfilePublicRow, 'id' | 'username' | 'display_name' | 'avatar_url'>;
+};
+
+export type FriendshipWithProfile = Friendship & {
+  friend: Pick<ProfilePublicRow, 'id' | 'username' | 'display_name' | 'avatar_url'>;
 };
 
 export function useFriendRequests(
@@ -55,6 +59,28 @@ export function useFriendsIds(
         throw error;
       }
       return new Set(data.map((row) => row.friend_id));
+    },
+    enabled: sessionUserId !== undefined,
+  });
+}
+
+export function useFriendsList(
+  sessionUserId: string | undefined
+): UseQueryResult<FriendshipWithProfile[], PostgrestError> {
+  return useQuery({
+    queryKey: ['friends', { scope: 'mine', list: sessionUserId }],
+    queryFn: async (): Promise<FriendshipWithProfile[]> => {
+      if (!sessionUserId) {
+        throw new Error('Session User ID needed');
+      }
+      const { data, error } = await supabase
+        .from('friendships')
+        .select('*, friend:profiles_public!friendships_friend_id_fkey(id, username, display_name, avatar_url)')
+        .order('created_at', { ascending: false });
+      if (error) {
+        throw error;
+      }
+      return data;
     },
     enabled: sessionUserId !== undefined,
   });

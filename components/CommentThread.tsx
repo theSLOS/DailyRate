@@ -1,6 +1,7 @@
 import { useComments, useSubmitComment, CommentWithAuthor } from '@/hooks/useComments';
 import { JSX, useState } from 'react';
 import { Pressable, View, Text, ActivityIndicator, TextInput } from 'react-native';
+import { Link } from 'expo-router';
 import { ANONYMOUS_AUTHOR_LABEL } from '@/constants/posts';
 import { ReportButton } from '@/components/ReportButton';
 
@@ -41,9 +42,11 @@ export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Eleme
       {commentsQuery.error && <Text>Couldn't load comments.</Text>}
       {commentsQuery.data?.map((comment) => (
         <View key={comment.id} className="border border-gray-300 rounded-lg p-3 mb-3">
-          <Text>
-            {comment.author.display_name ?? comment.author.username ?? ANONYMOUS_AUTHOR_LABEL}
-          </Text>
+          <Link href={{ pathname: '/profile/[id]', params: { id: comment.user_id } }}>
+            <Text>
+              {comment.author.display_name ?? comment.author.username ?? ANONYMOUS_AUTHOR_LABEL}
+            </Text>
+          </Link>
           <Text>{comment.body}</Text>
           <Pressable
             onPress={() =>
@@ -62,9 +65,11 @@ export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Eleme
 
           {comment.replies.map((reply) => (
             <View key={reply.id} className="ml-4 mt-2">
-              <Text>
-                {reply.author.display_name ?? reply.author.username ?? ANONYMOUS_AUTHOR_LABEL}
-              </Text>
+              <Link href={{ pathname: '/profile/[id]', params: { id: reply.user_id } }}>
+                <Text>
+                  {reply.author.display_name ?? reply.author.username ?? ANONYMOUS_AUTHOR_LABEL}
+                </Text>
+              </Link>
               <Text>{reply.body}</Text>
               <Pressable
                 onPress={() =>

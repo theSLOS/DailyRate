@@ -48,10 +48,10 @@ export default function TabLayout(): JSX.Element {
         }}
       />
       <Tabs.Screen
-        name="history"
+        name="profile"
         options={{
-          title: 'History',
-          tabBarIcon: ({ color }) => <TabBarIcon name="history" color={color} />,
+          title: 'Profile',
+          tabBarIcon: ({ color }) => <TabBarIcon name="user" color={color} />,
         }}
       />
     </Tabs>
