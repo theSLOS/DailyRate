@@ -345,6 +345,123 @@ Phase 4.7 (friends) **started 2026-07-28**. Design was settled beforehand in
     not a content leak. Right fix is an `after insert on blocks` trigger, not
     a `not exists` bolted onto every future friends read.
 
+- **Step 3 (profile screen + `FriendActionButton`) built + verified in-app
+  2026-07-29.** `hooks/useProfile.ts` (single-row `profiles_public` read by
+  id, same loading/error/not-found shape as `usePost`), `components/
+  FriendActionButton.tsx` (switches on `useFriendStatus`, calling one of
+  `useSendFriendRequest` / `useDeleteFriendRequest` / `useAcceptFriendRequest`
+  / `useRemoveFriendship` per branch — `'outgoing'` cancel and `'incoming'`
+  reject share the same `useDeleteFriendRequest` call with `requesterId`/
+  `addresseeId` swapped), and `app/profile/[id].tsx` (mirrors `post/[id].tsx`'s
+  three-state pattern; self-view redirects to `/(tabs)/history` via
+  `<Redirect>`, gated behind `authLoading` first so there's no flash — same
+  "call every hook, conditionally return after" shape `(tabs)/_layout.tsx`
+  already used for its own auth redirect).
+  - **New `UNNAMED_USER_LABEL` constant** (`constants/Profiles.ts`), kept
+    deliberately separate from `ANONYMOUS_AUTHOR_LABEL` — a profile is never
+    actually anonymous (you navigated to a specific person's id, they just
+    have no `display_name`/`username` set), so reusing the "Anonymous" wording
+    here would misrepresent a nameless account as a deliberately-anonymous
+    post, compounding the label-overload design smell already flagged in
+    Phase 4.5.
+  - **First-draft bug parade, all caught in review before being fixed**: the
+    hook's `useQuery(...)` call wasn't `return`ed (every caller would have
+    gotten `undefined`); the hook's `queryFn` was typed `Promise<ProfilePublicRow>`
+    (non-null) while returning `.maybeSingle()`'s nullable result; the button's
+    `switch` cases were written with no enclosing `switch` at all (bare `case`
+    labels in the function body); then, once wrapped, the JSX in four branches
+    had no `return` (expression evaluated and discarded); the five `handle*`
+    callbacks referenced in `onPress` were undefined for two full review passes
+    before being written; and a `deleteRequest`/`deleteFriendRequest` naming
+    mismatch survived one review pass. All fixed; final switch is exhaustive
+    over all seven `FriendStatus` members, no `default` needed.
+  - **Verified in-app** via direct URL navigation (`/profile/<id>`) against
+    three dummy accounts (dummy1probe/dummy2/dummy3, confirmed clean —
+    no pre-existing `friend_requests`/`friendships` rows via REST) — no nav
+    entry point exists yet (deliberately last in the plan), so this is typed
+    URLs, same as `post/[id].tsx`'s first test before `ExplorePostCard` had a
+    `Link`. User confirmed all of: viewing a stranger's profile ('none' →
+    "Add friend"), sending, the other side seeing 'incoming' → Accept/Reject,
+    cancel/outgoing, accept → 'friends' on both sides + friend count update,
+    remove, self-profile redirect, and the report-user action.
+  - Dev server left running in the background at `localhost:8081` for this
+    session (Expo web, `expo start --web`).
+  - **Remaining for Concept 2** (superseded below): profile tab, requests
+    screen, and nav entry points — none started.
+
+- **Profile tab rename done 2026-07-29** — `app/(tabs)/history.tsx` →
+  `app/(tabs)/profile.tsx` (`git mv`, history preserved), component renamed
+  `HistoryScreen` → `MyProfileScreen` (kept distinct from the dynamic
+  `ProfileScreen` in `app/profile/[id].tsx` — "mine vs. someone else's", same
+  distinction `useFriendsIds`'s `{ scope: 'mine' }` query key already used).
+  `app/(tabs)/_layout.tsx`'s tab `name`/`title`/icon updated to match; the
+  self-redirect in `app/profile/[id].tsx` repointed at `/(tabs)/profile`.
+  Claude did the rename directly at the user's request (mechanical, not
+  design work). The screen itself (profile header: avatar/name/friend count
+  above the existing chart+list) was written by the user, with one real bug
+  parade caught in review: literal `{...}`/`"border ..."` placeholders
+  **pasted verbatim from an earlier pseudocode sketch** (4th instance of this
+  exact failure mode logged in this file), plus a wrong hook call
+  (`usePostHistory` twice instead of `useProfile`), a missing `Image` `source`
+  prop, and an undeclared `profile` variable. Also surfaced: `constants/
+  Profiles.ts`'s `UNAMED_USER_LABEL` typo (flagged twice, unfixed until this
+  pass) was blocking a real import once something finally tried to use the
+  correctly-spelled name — fixed in the same pass, filename also lowercased
+  to `constants/profiles.ts` to match the `posts.ts` convention.
+  - **Recurring env gotcha**: renaming a route file doesn't retroactively
+    update Expo Router's generated typed-routes file
+    (`.expo/types/router.d.ts`) — it only regenerates while the dev server is
+    actively watching. Stopping the server (done deliberately, see below) and
+    then renaming/adding routes leaves stale/missing entries and real-looking
+    `tsc` errors on `<Redirect href="...">`/`<Link href="...">` until the
+    server is restarted at least once. Not a code bug each time it recurred —
+    confirmed by checking git history (files were genuinely never tracked
+    under the stale casing/path) before treating it as one.
+  - **Test-account avatar tangent, no code change**: user asked to upload a
+    screenshot as dummy1probe's `avatar_url` for visual testing. Blocked by
+    design: `post-photos`' Concept-4 read policy only grants access through a
+    *visible `posts` row* referencing the object — a standalone upload has no
+    such row, so **not even its own uploader can read it back** (confirmed:
+    upload succeeded, `list`/`sign` both denied). There is no avatar-upload
+    feature (bucket/RLS/hook) built at all yet. Presented the real options
+    (data-URI shortcut vs. building real avatar upload); **user deferred to a
+    later feature** and declined the shortcut. Orphaned test object left in
+    `post-photos` (delete attempt got `400`, harmless — unreadable by anyone
+    per the same policy gap).
+
+- **Requests screen + nav entry points built 2026-07-29 — Concept 2 COMPLETE,
+  Phase 4.7 COMPLETE pending in-app verification.** User explicitly asked
+  Claude to write this pair directly (stepping back from guide+review for
+  this one).
+  - **`app/requests.tsx`** (new, top-level sibling route like `post/[id].tsx`)
+    — splits `useFriendRequests`'s combined result into incoming/outgoing by
+    comparing `addressee_id`/`requester_id` against the session user, plain
+    `.map()` over two `View` sections (not `FlatList` — matches
+    `CommentThread`'s convention for a short, unpaginated list rather than the
+    `FlatList` convention used for posts). Incoming rows get Accept/Reject,
+    outgoing get Cancel — reusing `useAcceptFriendRequest`/
+    `useDeleteFriendRequest` with no new mutations. Each row's name is a
+    `Link` to `/profile/[id]`.
+  - **Nav entry points**: `ExplorePostCard` and `app/post/[id].tsx` both gained
+    a nested `Link` to `/profile/[id]` on the author name, guarded on
+    `post.user_id !== null` (anonymous posts stay plain, unlinkable text,
+    matching the existing `BlockButton` anonymity guard) — nested inside the
+    card's existing outer `Link`/`Pressable` to `/post/[id]`; RN's touch
+    responder system resolves this to "whichever is tapped" rather than both
+    firing. `CommentThread` got the same treatment on both comment and reply
+    author names, unconditionally (comments have no anonymity, `user_id`
+    always present). `app/(tabs)/profile.tsx` gained a "Friend requests"
+    `Link` (with an incoming-count suffix) to `/requests`.
+  - **Verified**: full `tsc --noEmit` clean, `eslint --max-warnings=0` clean
+    on every touched file.
+  - **In-app verified 2026-07-29** (user, browser, dummy1probe/dummy2/dummy3)
+    — user confirmed the requests screen (Accept/Reject/Cancel all work) and
+    all three nav entry points (Explore, post detail, comments all correctly
+    link author names to `/profile/[id]`; anonymous posts stay unlinkable).
+    **Phase 4.7 is now fully built and verified — Concepts 1 and 2 both
+    complete.** Next phase per `CLAUDE.md` is Phase 5 (region-based
+    proximity).
+
 ---
 
 **Phase 4.5 pushed to GitHub 2026-07-25** — commit `fe4603f` on `main` (19 files: the 3 migrations, hooks, components, screens, types, docs). **Deliberately excluded from the commit** (pre-existing, not this session's work): `app.json` + `package.json`/`package-lock.json` modifications (present at session start), and the root deletions of `CLAUDE.md` + `daily-rating-social-app-spec.md` (those files now live in the gitignored `memory/`; committing the deletions is the user's call, not made). `memory/` is gitignored, so none of the build-log/decision records are in the repo.
