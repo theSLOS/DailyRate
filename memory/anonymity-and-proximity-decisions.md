@@ -29,3 +29,18 @@ Four decisions made 2026-07-21, before either feature is built, so a future sess
 **Why:** captured before implementation so neither feature gets built against stale assumptions in a future session — see `[[project-phase-status]]` for the actual build log once these are underway.
 
 **How to apply:** `CLAUDE.md`'s phase table now has "4.5 — Anonymous posting" inserted between Phases 4 and 5, and Phase 5's row is annotated as region-based rather than distance-radius. When 4.5 starts, follow the per-post/moderator-visible/server-side-enforcement decisions above. When Phase 5 starts, build region-matching via bundled boundaries and resolve the sparse-region fallback with the user before shipping — don't pick one unilaterally.
+
+---
+
+**Phase 5 kickoff, 2026-07-30 — sparse-fallback resolved, pipeline finalized (before any code written).** Planned via `/plan` mode; see the plan file referenced in that session for the full concept sequence. Key resolutions, superseding the "still open" items above:
+
+- **Sparse-region fallback: widen to country, then fall back to "Most liked."** No third tier.
+- **Boundary dataset: Natural Earth 1:110m admin-0 (country) + admin-1 (state/province)**, public domain, bundled once via a seed migration into a new `region_boundaries` table (GiST-indexed). No reverse-geocoding API — this was already decided above, just now naming the actual dataset.
+- **Pipeline redesigned mid-session (user's proposal, adopted over Claude's original draft): resolve region once at app-open/login, not at post time, and never persist raw coordinates on `posts` at all.**
+  - A `resolve_region(lng, lat)` RPC is the *only* place raw device coordinates ever reach the server — it runs `ST_Contains` against `region_boundaries` and returns just `{ country_code, state_code, place_label }`. Nothing persists the raw point; `posts.location` (the Phase-1 `geography(Point,4326)` column) stays permanently unused under this design — there is no plan to ever populate it.
+  - Resolution happens once per app session, at the same trigger point as `useEnsureTimezone` (once per sign-in), and the result is cached client-side for that session — reused for **both** tagging new posts **and** filtering Explore's Proximity mode. This replaces an earlier in-session answer that had Explore doing a fresh live location request every time it opened; that idea is superseded.
+  - `posts` gains three plain nullable columns (`region_country_code`, `region_state_code`, reusing existing `place_label`) written directly at compose time from the cached region — no DB trigger, no insert-time `ST_Contains`.
+  - **Accepted trade-off:** these become fully client-trusted columns, same tier as `rating`/`message`/`timezone` today — nothing re-validates them server-side (unlike `local_date`, which is deliberately server-computed specifically to prevent lying about the date). A client could in principle claim any region. Consistent with this app's existing trust model; not treated as a gap to fix.
+  - **Accepted trade-off:** region is resolved once per session, not continuously — a user who opens the app in one city and posts hours later from another (without relaunching) gets tagged with the stale region. Low-probability for a once-a-day journal app; not mitigated.
+
+**How to apply:** when Phase 5 concepts are built, follow the resolve-once-at-login pipeline above, not the original per-post-capture idea earlier in this file — the boundary-dataset and `ST_Contains` mechanics are unchanged, only *when* resolution happens and *what* gets persisted changed.

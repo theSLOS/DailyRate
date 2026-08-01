@@ -465,3 +465,141 @@ Phase 4.7 (friends) **started 2026-07-28**. Design was settled beforehand in
 ---
 
 **Phase 4.5 pushed to GitHub 2026-07-25** — commit `fe4603f` on `main` (19 files: the 3 migrations, hooks, components, screens, types, docs). **Deliberately excluded from the commit** (pre-existing, not this session's work): `app.json` + `package.json`/`package-lock.json` modifications (present at session start), and the root deletions of `CLAUDE.md` + `daily-rating-social-app-spec.md` (those files now live in the gitignored `memory/`; committing the deletions is the user's call, not made). `memory/` is gitignored, so none of the build-log/decision records are in the repo.
+
+---
+
+Phase 5 (region-based proximity) **started 2026-07-30**, planned via `/plan`
+mode first — see `[[anonymity-and-proximity-decisions]]`'s "Phase 5 kickoff"
+addendum for the resolved sparse-fallback/pipeline decisions (resolve-once-
+at-login, never persist raw coordinates, widen state→country→most-liked).
+
+- **Concept 1 (boundary dataset) built + fully verified 2026-08-01.**
+  `region_boundaries` table + seed data — the first concept, schema-only, no
+  app code. Two migrations for the table/RLS, one for the seed data:
+  - **`20260730050811_region_boundaries.sql`** (table + RLS) — written by the
+    user under guide+review, several rounds. `region_boundaries(id, admin_level
+    check ('country'|'state'), country_code, state_code nullable,
+    name, geom geography(MultiPolygon,4326))`, GiST index on `geom`, plus a
+    table-level `check ((admin_level = 'country') = (state_code is null))`
+    added on review to keep the two tiers from drifting out of sync (Claude's
+    suggestion, user's call to include it). **Bug parade during authoring,
+    all instances of failure modes already logged repeatedly in this
+    file**: `gerography`/`4236` typos (2nd+ instance of SQL keyword typos
+    surviving to review); the table itself and the migration filename both
+    initially read `region_boundries` (missing the second "a") — caught and
+    fixed before push; a literal `create index ...` with the `...` pasted in
+    from a pseudocode sketch rather than filled in (Nth instance of this
+    exact pattern); `grant slect` typo; a missing comma before the
+    table-level `check (...)` (the *third* instance of "missing comma before
+    a table-level check" logged in this file specifically); and a false-start
+    regression where `state_code` was briefly changed to `not null`,
+    which would have made every country-tier row uninsertable — caught in
+    review, reverted.
+  - **RLS gap found + fixed**: the original policy (`for select using
+    (true)`, no `to authenticated`) applied to *every* role including `anon`
+    — verified via a direct anon-key REST call returning `200 []` (not a
+    `403`) against the empty table. Same unresolved pattern already flagged
+    for `profiles_public`. Fixed via a second migration,
+    **`20260730052915_region_boundries_policy_fix.sql`** (filename still
+    carries the original typo — content is correct, cosmetic only), which
+    drops and recreates the policy with `to authenticated`.
+  - **A genuinely new, worth-remembering finding: `supabase db push`
+    reported success and recorded the policy-fix migration as applied in
+    `migration list`, but the live policy's role scope did not actually
+    reflect `to authenticated`** — confirmed by querying
+    `pg_policy.polroles::regrole[]` directly, which showed `{-}` (Postgres's
+    representation of "no role restriction / PUBLIC"), not `{authenticated}`,
+    even after the "fix" migration was pushed and listed as applied on both
+    `local` and `remote`. Re-running the **identical** `drop policy` /
+    `create policy ... to authenticated` statements directly via
+    `supabase db query` immediately produced the correct `{authenticated}`
+    scope. Root cause not diagnosed (a pooler/connection caching quirk during
+    `db push` is suspected, not confirmed). **Lesson: for an RLS change where
+    the exact role scope matters, `migration list`'s "applied" status is not
+    sufficient proof — verify the live policy definition itself (e.g. via
+    `pg_policy`), not just that the migration ran without error.** Confirmed
+    conclusively after the direct fix, with real seed data loaded: anon-key
+    REST call returns `200 []` against a table that provably has 471 rows —
+    the first time this check was actually conclusive (it was inconclusive
+    earlier against the empty table, since `[]` doesn't distinguish "blocked
+    by RLS" from "genuinely empty," a trap already logged during Phase 4.7).
+  - **Seed data built end-to-end by Claude directly, at the user's explicit
+    request** ("you do it") — a bounded, non-recurring data-pipeline task,
+    same category of one-off delegation as `useComments.ts`/blocking-
+    concept-2/reporting in Phase 4. Real findings from that work, in case a
+    boundary-data refresh is ever needed again:
+    1. **GDAL/`ogr2ogr` install had two failed paths before succeeding.**
+       `winget install GISInternals.GDAL` first stalled — measured the host
+       (`download.gisinternals.com`) at ~37 KB/s directly via `curl`,
+       confirming it was the host, not winget, since a different CDN
+       (`repo.anaconda.com`) measured ~1.7 MB/s in the same environment.
+       Retried and got **Error 1925** — the GISInternals MSI is an all-users
+       install requiring admin elevation, unavailable in this session (no
+       silent UAC path; elevation prompts can't be answered non-
+       interactively). **Fixed via micromamba** — a ~4.5 MB portable,
+       no-admin-required conda-forge package manager (`micro.mamba.pm`) —
+       `micromamba create -p <prefix> -c conda-forge gdal` installs
+       prebuilt GDAL binaries (including `ogr2ogr.exe`) with no compilation
+       and no elevation. **Worth remembering as the default path for any
+       future native-tool need in this environment**, ahead of winget/MSI
+       installers that may require admin.
+    2. **The originally-decided dataset (Natural Earth 1:110m for *both*
+       tiers) turned out to be wrong for this app** — discovered via
+       `ogrinfo` before committing to the conversion: the 1:110m admin-1
+       (state/province) shapefile has only **51 features, all US states**.
+       Natural Earth only ships full-world admin-1 coverage starting at
+       1:50m. Since every current test account (all 8 dummies +
+       test1/test2) is `Australia/Sydney`, shipping 1:110m as originally
+       decided would have made state-level matching **silently work for the
+       US only** — every other country's users would always fall straight
+       through the sparse-fallback to country-level, defeating the point of
+       the state tier for this project's own userbase. **Flagged and
+       re-decided with the user** (not fixed unilaterally): state tier
+       switched to **1:50m** (294 features, full world coverage, still only
+       ~890 KB zipped); country tier stayed at **1:110m** (177 features,
+       already full world coverage, smaller file). The two tiers now
+       deliberately use different Natural Earth resolutions — not a
+       mismatch, a considered choice.
+    3. **A known Natural Earth data quirk handled deliberately**: the raw
+       `ISO_A2` field on the admin-0 (countries) layer has a long-documented
+       bug reading `-99` for France, Norway, and a few disputed territories.
+       Used `ISO_A2_EH` instead (the corrected field), verified via `ogrinfo
+       -where "ISO_A2='-99'"` that it resolves France→`FR` and Norway→`NO`.
+       Two genuinely disputed territories (N. Cyprus, Somaliland) still read
+       `-99` under either field — accepted as-is; they have no real ISO code
+       to map to, not a bug to fix.
+    4. **Conversion pipeline**: `ogr2ogr -f PGDump` per shapefile, each with
+       a `-sql` clause remapping Natural Earth's own attribute names into
+       this project's `country_code`/`state_code`/`name` columns and
+       `-lco GEOM_TYPE=geography` to match `region_boundaries.geom`'s column
+       type exactly (no cast needed later) — producing two **staging-table**
+       SQL dumps (not `region_boundaries` directly, since `ogr2ogr` has no
+       concept of the `admin_level` split). Final migration,
+       **`20260801064023_seed_region_boundaries.sql`**, was assembled via
+       `sed`/`cat` (stripping the auto-generated `DROP TABLE`/`BEGIN`/
+       `COMMIT` lines from each dump, since the migration owns its own
+       transaction and the staging tables are created fresh) — **never by
+       reading the multi-megabyte WKB hex geometry blobs into context and
+       retyping them**, which would risk silent corruption of the polygon
+       data. The migration inserts from both staging tables into
+       `region_boundaries` with `admin_level` set explicitly per source, then
+       drops both staging tables — confirmed gone afterward via
+       `information_schema.tables`.
+    5. **`supabase db query --file ... --linked`** is this project's first
+       use of direct ad-hoc SQL queries against the remote DB from the CLI
+       (distinct from `db push`, which only applies migration files) — used
+       here for verification, not schema changes. Note: it only prints the
+       **last** statement's result set when a file has multiple `select`s;
+       run one query per file/call for multi-check verification.
+  - **Verified DB-level, fully conclusive**: row counts (177 country + 294
+    state = 471, matching the source shapefiles' feature counts exactly);
+    `ST_Contains` spot-checks — Sydney (-33.8688, 151.2093) → New South Wales
+    + Australia; Denver, CO (39.7392, -104.9903) → Colorado + United States;
+    a mid-Pacific point (0, -150) → zero rows (the empty-match case the
+    later state→country sparse-fallback logic depends on); and the
+    anon-blocked RLS check described above, now conclusive with real data
+    present. `types/database.ts` unaffected (no new persistent tables — the
+    staging tables are dropped within the same migration).
+  - **Concept 1 is complete.** Next up per the plan: Concept 2, the
+    `resolve_region(lng, lat)` RPC — the only place raw coordinates will ever
+    reach the server under the revised pipeline.
