@@ -838,9 +838,128 @@ at-login, never persist raw coordinates, widen state→country→most-liked).
     future bisect for "when did native break" should not land on a
     region-resolution commit.
 
-- **Concept 3 is complete.** Next: Concept 4 — the write path (tag new posts
-  with the cached region at compose time) plus surfacing the location when
-  viewing a post. This is where `useSessionRegion` gets its first real call
-  site. Still unguarded and worth handling there: passing lat/lng swapped
-  returns `[]` rather than an error, indistinguishable from mid-ocean, because
-  SRID 4326 is metadata and `ST_Point` validates nothing.
+- **Concept 3 is complete.**
+
+- **Concept 4 (write path + display) built + verified 2026-08-03.** Migration
+  `supabase/migrations/20260803095505_add_region_columns_to_public_posts.sql`
+  written by the user; the client wiring was done by Claude at the user's
+  explicit request ("can you do all that").
+  - **Migration**: `posts` gains `region_country_code` + `region_state_code`
+    (both nullable text); the Phase-1 `place_label` column, scaffolded for the
+    spec's original reverse-geocoding design and never populated, is reused
+    rather than adding a fourth column. Then `create or replace view
+    posts_feed` appending all three. **No RLS change** — new columns on an
+    existing table inherit `posts`' policies.
+    - The replacement view body was taken from **`pg_get_viewdef`**, not
+      reconstructed from the Phase 4.5 migration, because the view had already
+      been replaced once (Concept 4 of 4.5) and the file was stale. Same
+      instinct as reading `pg_proc` in Phase 5 Concept 2: *when an object has
+      been altered across migrations, ask the database what it is now.*
+    - Two traps, both respected: `create or replace view` **cannot reorder or
+      drop columns** (all 14 existing ones respelled in exact order, new ones
+      appended), and **`with (security_invoker = on)` must be restated** —
+      silently losing it would turn `posts_feed` into a definer view and
+      bypass the 36h window and block exclusion entirely. **Verified after
+      push via `pg_class.reloptions` → `{security_invoker=on}`**, not assumed.
+  - **Three product decisions, all the user's call:**
+    1. **Anonymous posts keep their region** — deliberate, not inherited.
+       Stripping it would remove anon posts from the proximity feed entirely
+       (defeating the feature), and state/country granularity is far coarser
+       than the friends-feed guessability already accepted and warned about in
+       `ANONYMOUS_POST_WARNING`.
+    2. **Posting waits for region resolution.** Claude recommended the
+       opposite (never block the scarce 4pm–noon entry window on GPS); user
+       reaffirmed, so it was built as asked. **Key detail that makes it safe:
+       the gate is `regionQuery.isLoading`, not "has a region"** — permission
+       denial *returns a value* rather than throwing, so a user who taps
+       "Don't Allow" resolves instantly and posts with nulls. Only a slow GPS
+       fix on a granted device actually waits.
+    3. **Editing never re-tags.** `handleSubmit` resolves each column as
+       `existingPost?.x ?? resolvedRegion?.y ?? null`, so a post keeps the
+       region it was first written from. The trailing `?? null` is
+       load-bearing: `undefined` in a Supabase upsert object means *omit this
+       column*, not *set it null*.
+  - **Two bugs found in the user's partial edit to `types/posts.ts`**, one of
+    them serious: `Post` had been redefined as
+    `Database[...]['Row']['region_country_code']` (i.e. `string | null`, not
+    the row type), and the `FeedPost` fields were named `country_code` /
+    `state_code` while the view's columns are `region_country_code` /
+    `region_state_code`. **The second would never have been caught by `tsc`** —
+    the hooks do `data as FeedPost[]`, and a cast is an assertion, not a
+    check, so both fields would simply have been `undefined` at runtime. Cost
+    of hand-written boundary types: matching reality is entirely on you.
+  - **A UI honesty bug caught and fixed during the wiring**: gating via
+    `submitting={isSubmitting || regionQuery.isLoading}` would have shown
+    "Saving..." while the app was actually waiting on GPS. `ComposeForm`
+    instead gained `blocked` + `blockedLabel` props, with the screen passing
+    `LOCATION_RESOLVING_LABEL`. The component still doesn't know *why* it's
+    blocked. **General lesson: when a boolean's name stops matching what you
+    are using it for, add a prop rather than overload one.**
+  - **Display**: `place_label` rendered on both `app/post/[id].tsx` and
+    `components/ExplorePostCard.tsx`. No hook change was needed for either —
+    both already `.select('*')` against `posts_feed`.
+  - **Verified**: in-app on device (compose → "Finding your location..." →
+    permission prompt → post) and via REST — the row landed as
+    `AU` / `AU-VIC` / `"Victoria, Australia"`, and an untagged post from the
+    same session correctly carries nulls in all three columns.
+
+- **QoL (same session): the signed-in user's name now shows in the top-right
+  header at all times.** New `components/HeaderProfileName.tsx` (calls
+  `useAuth` + the existing `useProfile`), wired into `screenOptions.headerRight`
+  in **both** `app/(tabs)/_layout.tsx` (tab screens draw their own headers) and
+  `app/_layout.tsx` (everything the root `Stack` pushes — post detail, friends,
+  requests, other profiles). Auth screens are the deliberate exception
+  (`headerShown: false`, and no session to name).
+  - `headerRight` takes **a function, not an element** — that is what lets the
+    header re-render when `useProfile` resolves.
+  - **Falls back `display_name ?? username`, then renders nothing** — not
+    `ANONYMOUS_AUTHOR_LABEL`, because that label is already overloaded (Phase
+    4.5's recorded design smell: it means both "deliberately anonymous post"
+    and "user with no name"), and showing "Anonymous" as your *own* permanent
+    header would be actively confusing.
+  - **All 8 dummy accounts given display names + usernames** (`Dummy A`–`Dummy
+    H`, `dummyA_probe`/`dummyB`…`dummyH`) via a single
+    `update ... from (values ...) join auth.users` through
+    `supabase db query --linked`, which runs as superuser and bypasses RLS —
+    fine for seeding test data, but the one path in this project that ignores
+    every policy built, so not a habit to form. `test1`/`test2` deliberately
+    left nameless. Side benefit: Phase 4.5 Concept 1's author-strip
+    verification once "passed" trivially because dummy profiles had null
+    names; with real names everywhere that class of false pass is now much
+    harder to hit.
+
+- **DEFERRED TO PHASE 7 (trust, safety & privacy) — confirmed 2026-08-03, user
+  chose to fix later: the live feed is readable with the anon key and no user
+  account at all.** A REST call carrying only `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+  (which ships publicly in the Expo bundle) returned live posts from
+  `posts_feed` including message text and `place_label`. `profiles_public`
+  likewise returned rows to anon.
+  - **Cause**: `posts`' SELECT policy has no `to authenticated` clause, and its
+    live-post branch (`created_at > now() - 36h and moderation_status =
+    'approved'` + block exclusion) does not depend on `auth.uid()`.
+  - **Severity, stated precisely**: not a private-data leak — these posts are
+    already visible to every authenticated user. What it costs is (a) no
+    account required, (b) **block exclusion silently does not apply**, since
+    with a null `auth.uid()` no `blocks` row matches and an anonymous reader
+    sees everything unfiltered, and (c) as of Concept 4 the payload now
+    includes region.
+  - **This is the third instance of the same pattern** (after
+    `region_boundaries` in Phase 5 Concept 1 and `profiles_public` flagged
+    repeatedly) — policies written without `to authenticated` default to
+    PUBLIC, which includes `anon`.
+  - **Fix when picked up**: add `to authenticated` to the `posts` and
+    `comments` SELECT policies and to `profiles_public`. **Must be verified
+    against `pg_policy.polroles` afterwards, not by `migration list`** — Phase
+    5 Concept 1 proved `db push` can report success while the live policy's
+    role scope stays `{-}`.
+  - **A verification trap worth re-reading before testing this**: an empty
+    result from an anon call is *not* proof of protection. The first attempt at
+    this check returned `200 []` only because no live post existed at that
+    moment. Always confirm the table provably has matching rows first.
+
+  Next: Concept 5 — the Explore proximity feed itself (filter on
+  `region_state_code`, which is globally unique thanks to ISO 3166-2's country
+  prefix, with the state → country → most-liked fallback). Still unguarded and
+  worth handling there: passing lat/lng swapped to `resolve_region` returns
+  `[]` rather than an error, indistinguishable from mid-ocean, because SRID
+  4326 is metadata and `ST_Point` validates nothing.

@@ -10,6 +10,7 @@ import { queryClient } from '@/lib/queryClient';
 import '../global.css';
 
 import { useColorScheme } from '@/components/useColorScheme';
+import { HeaderProfileName } from '@/components/HeaderProfileName';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -47,7 +48,7 @@ function RootLayoutNav(): JSX.Element {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack>
+        <Stack screenOptions={{ headerRight: () => <HeaderProfileName /> }}>
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         </Stack>

@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import { useEnsureTimezone } from '@/hooks/useEnsureTimezone';
+import { HeaderProfileName } from '@/components/HeaderProfileName';
 
 function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>['name'];
@@ -31,6 +32,7 @@ export default function TabLayout(): JSX.Element {
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         // prevents hydration error in React Navigation v6 on web
         headerShown,
+        headerRight: () => <HeaderProfileName />,
       }}
     >
       <Tabs.Screen
