@@ -3,10 +3,15 @@ import { useQuery, UseQueryResult } from '@tanstack/react-query';
 import type { RegionResult, Region } from '@/types/region';
 import * as Location from 'expo-location';
 
-export function useSessionRegion(userId: string | undefined): UseQueryResult<RegionResult, Error> {
+export function useSessionRegion(
+  userId: string | undefined,
+  // callers gate this so the OS location prompt only fires when the user does
+  // something location-shaped, per the lazy call-site decision
+  enabled: boolean = true
+): UseQueryResult<RegionResult, Error> {
   return useQuery({
     queryKey: ['region', { userId }],
-    enabled: userId !== undefined,
+    enabled: userId !== undefined && enabled,
     staleTime: Infinity,
     gcTime: Infinity,
     queryFn: async (): Promise<RegionResult> => {

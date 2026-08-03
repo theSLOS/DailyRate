@@ -45,8 +45,9 @@ Implement one concept, verify it in isolation directly against the DB/API (not t
 | 3 | Explore feed + 36h rule | complete |
 | 4 | Engagement + blocking/reporting | complete |
 | 4.5 | Anonymous posting | complete |
-| 4.7 | Friends (two-way mutual follow) + friends feed | complete |
-| 5 | Filtering & proximity (region-based, not distance-radius — see memory) | not started |
+| 4.7 | Friends (two-way mutual follow) — relationships only | complete |
+| 4.8 | Friends feed + Friends tab | not started |
+| 5 | Filtering & proximity (region-based, not distance-radius — see memory) | complete |
 | 5.5 | Front server + Redis caching layer | not started |
 | 6 | Notifications | not started |
 | 7 | Trust, safety & privacy | not started |

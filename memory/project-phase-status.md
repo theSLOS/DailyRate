@@ -957,9 +957,105 @@ at-login, never persist raw coordinates, widen state→country→most-liked).
     this check returned `200 []` only because no live post existed at that
     moment. Always confirm the table provably has matching rows first.
 
-  Next: Concept 5 — the Explore proximity feed itself (filter on
-  `region_state_code`, which is globally unique thanks to ISO 3166-2's country
-  prefix, with the state → country → most-liked fallback). Still unguarded and
-  worth handling there: passing lat/lng swapped to `resolve_region` returns
-  `[]` rather than an error, indistinguishable from mid-ocean, because SRID
-  4326 is metadata and `ST_Point` validates nothing.
+- **Concept 5 (the Explore feed switcher — newest / most liked / near you)
+  built + verified in-app 2026-08-03. PHASE 5 IS COMPLETE.** Built by Claude at
+  the user's request. New `types/feed.ts`
+  (`ExploreFeedType`, `RegionFeedTier`), `components/FeedTypeSwitcher.tsx`
+  (presentational), a rewritten `hooks/useExploreFeed.ts`, and an
+  `app/(tabs)/explore.tsx` that keeps the switcher visible in *every* state
+  (loading, error, empty) so a user can always switch back out of a feed that
+  has nothing in it.
+  - **One hook with a `feedType` param, not three hooks** — pagination,
+    filtering, hidden-post exclusion and polling are all shared; only the
+    ordering and the filter differ.
+  - **Most-liked is a bounded top-50, deliberately not infinite.**
+    `like_count` is *mutable*, so keyset pagination over it would skip and
+    duplicate posts as counts change mid-scroll. Implemented by having
+    `getNextPageParam` return `undefined` after the first page. Also the more
+    cacheable shape for Phase 5.5. Secondary sort on `created_at desc` for a
+    stable order within a like tier.
+  - **The region fallback tier is resolved once, on the first page, then
+    carried in the page param** (`{ cursor, tier }`), not recomputed per page.
+    Without this, page 1 could serve state-level posts and page 2 could fall
+    through to country and start appending a *different* feed underneath the
+    first, with no visible seam. **General rule: when a query's shape is
+    decided dynamically, pin that decision for the life of the pagination.**
+  - **`useSessionRegion` gained an `enabled` param** so that *picking "Near
+    you"* is what triggers the OS location prompt — not opening Explore.
+    Rules of hooks forbid calling it conditionally, so the gate had to move
+    into the hook. This preserves Concept 3's lazy call-site decision, which a
+    naive `useSessionRegion(userId)` on the Explore screen would have silently
+    undone.
+  - **Known, accepted limitation — the fallback tier is decided on the *raw*
+    server response, but self-exclusion happens client-side.** A region whose
+    only posts are your own resolves to tier `state` (rows were found), then
+    the `select` filters them out, leaving an empty feed and *no* fallback
+    notice. Cannot be cleanly fixed server-side: `.neq('user_id', userId)`
+    drops anonymous posts, since the view nulls their `user_id` — the exact
+    Phase 4.5 trap that moved self-exclusion client-side in the first place.
+    Invisible with real users; looks broken with one tagged post.
+  - **A typing detour worth remembering**: an attempt to factor the shared
+    `supabase.from('posts_feed').select('*')` into a helper required
+    hand-writing `PostgrestFilterBuilder`'s five generic parameters, which
+    produced four cascading type errors. Reverted to letting each fetch
+    function build its own query inline — **mild repetition beats hand-typing
+    a query builder's generics.**
+  - **Test data seeded through the real API, not as superuser** (respecting
+    the standing "don't route around the app's own business rules" preference
+    — Sydney local time was 20:51, so the 4pm entry window was legitimately
+    open): all 8 dummies now have a live region-tagged post for
+    `local_date = 2026-08-03` — dummy1probe/2/3/4 in `AU-VIC`, dummy5/6/7/8 in
+    `AU-NSW` — plus a real like spread (dummy7 = 5, dummy3 = 3, dummy5 = 2) so
+    most-liked orders by something other than a constant.
+    - **dummy2 and dummy4 came back `409` / `23505`** — they already had a post
+      for today, and the one-per-day unique constraint correctly refused.
+      Their existing posts were tagged via `PATCH` through their own sessions
+      (owner-update RLS + entry window) rather than delete-and-reinsert.
+      **Seeding through the front door tests the front door**: a superuser
+      insert would have silently written a duplicate day if that constraint
+      had ever regressed.
+    - The 10 cross-user likes also re-exercised Phase 4's `security definer`
+      counter trigger more thoroughly than its original verification did.
+  - **Verified in-app** on device across all three feed types.
+
+**PHASE 5 (filtering & proximity) IS COMPLETE** as of 2026-08-03 — boundary
+dataset, `resolve_region` RPC, once-per-session client hook, post tagging +
+display, and the three-way Explore switcher with the state → country →
+most-liked fallback.
+
+Outstanding items deliberately carried forward, none blocking:
+- **The friends feed was never built** (see the Phase 4.7 correction below).
+- **Anon-readable feed** — deferred to Phase 7, recorded above.
+- **Swapped lat/lng into `resolve_region` returns `[]` rather than erroring**,
+  indistinguishable from mid-ocean, because SRID 4326 is metadata and
+  `ST_Point` validates nothing. Still unguarded.
+- **9-country admin-1 coverage** — accepted; revisit by reseeding from Natural
+  Earth 1:10m if state-level matching outside those 9 ever matters.
+
+---
+
+**Correction to the phase table, found 2026-08-03: Phase 4.7 was recorded as
+"Friends (two-way mutual follow) + friends feed — complete", but the friends
+feed does not exist.** `hooks/useFriends.ts` contains nine hooks, all
+relationship management (requests, ids, list, count, status, send / delete /
+accept / remove); `app/friends.tsx` is the friends *list* screen, which links
+to profiles. There is no feed query and no feed screen. The build log's own
+§7 note already said "friends feed/hooks still deferred" — the table
+overclaimed. `memory/CLAUDE.md`'s table has been corrected.
+
+**When the friends feed is built, there is a real design trap waiting**, found
+while planning it: `posts_feed` nulls `user_id` whenever
+`is_anonymous and user_id <> auth.uid()`, so a naive `.in('user_id',
+friendIds)` would **silently drop every anonymous post by a friend** — directly
+contradicting `ANONYMOUS_POST_WARNING`, which already promises users that
+"anonymous posts still reach the feeds of people you are friends with." The fix
+is cheap and does *not* need `security definer`: the anonymity strip lives in
+the **SELECT projection**, so a `WHERE` clause can still see the real
+`p.user_id`. A second `security_invoker` view filtering
+`exists (select 1 from friendships f where f.user_id = auth.uid() and
+f.friend_id = p.user_id)` works, with the 36h window and block exclusion
+inherited free from the base table's RLS.
+
+Also noted while there: **the history screen is no longer a tab** — it was
+folded into `app/(tabs)/profile.tsx` (chart + post history). Current tabs are
+Explore, Home, Profile. The user's intended structure adds a Friends tab.
