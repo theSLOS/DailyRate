@@ -555,7 +555,7 @@ at-login, never persist raw coordinates, widen state→country→most-liked).
        through the sparse-fallback to country-level, defeating the point of
        the state tier for this project's own userbase. **Flagged and
        re-decided with the user** (not fixed unilaterally): state tier
-       switched to **1:50m** (294 features, full world coverage, still only
+       switched to **1:50m** (294 features, still only
        ~890 KB zipped); country tier stayed at **1:110m** (177 features,
        already full world coverage, smaller file). The two tiers now
        deliberately use different Natural Earth resolutions — not a
@@ -603,3 +603,119 @@ at-login, never persist raw coordinates, widen state→country→most-liked).
   - **Concept 1 is complete.** Next up per the plan: Concept 2, the
     `resolve_region(lng, lat)` RPC — the only place raw coordinates will ever
     reach the server under the revised pipeline.
+  - **Correction logged 2026-08-03 (see Concept 2 below): the "1:50m = full
+    world coverage" claim above was wrong.** The 294 admin-1 features span
+    only **9 countries** (`RU, US, IN, ID, CN, BR, CA, AU, ZA`) — Natural
+    Earth's 1:50m admin-1 layer is a large-country subset, not global. The
+    original text has been amended in place. See Concept 2 for the accepted
+    trade-off.
+
+- **Concept 2 (the `resolve_region(lng, lat)` RPC) built + DB-verified
+  2026-08-03.** Migration `supabase/migrations/20260803074846_resolve_region.sql`,
+  written by the user under guide+review. `security invoker` (deliberately
+  *not* `definer`, unlike the friends RPCs — it only reads a reference table
+  that already has its own `select ... to authenticated` policy, so `definer`
+  would grant privileges it has no use for *and* would bypass the role scope
+  fought for in Concept 1), `stable`, `set search_path = public`, an
+  `auth.uid() is null` guard raising `28000`, and
+  `returns table (country_code, state_code, place_label)` so the signature
+  types cleanly into `types/database.ts`.
+  - **One index-backed scan resolves both tiers** via conditional aggregation
+    (`max(case when admin_level = 'country' then ... end)`), rather than two
+    separate lookups. `ST_Covers(rb.geom, v_point)` — **not `ST_Contains`,
+    which PostGIS only implements for `geometry`**; casting `geom::geometry`
+    would compile and return right answers while silently defeating the GiST
+    index on the geography column.
+  - **A genuine design bug caught in review, caused by Concept 1's deliberate
+    mixed-resolution choice**: 1:110m country polygons have smoother
+    coastlines than 1:50m state polygons, so a coastal point (Sydney is one)
+    can sit inside the state polygon but *outside* the country polygon.
+    The first draft returned zero rows in that case, discarding a valid state
+    match. Fixed with a `coalesce` that falls back to the **state row's own
+    `country_code`** (non-null on both tiers, guaranteed by Concept 1's
+    `check ((admin_level = 'country') = (state_code is null))`).
+  - **Second bug, same review: `||` NULL propagation in the label.** The
+    coastal-rescue path leaves `v_country_name` null while `v_state_name` is
+    set, and `'New South Wales' || ', ' || NULL` evaluates to `NULL` — so the
+    label would silently vanish in exactly the case the `coalesce` was added
+    to rescue. Replaced with `concat_ws(', ', v_state_name, v_country_name)`,
+    which skips NULL arguments and collapses the whole `case` branch. Same
+    family as the Phase 4 optimistic-comment bug: **this codebase's fallback
+    chains all key on NULL, never on emptiness** — and `concat_ws` skips NULL
+    but *not* `''`.
+  - **The recurring pseudocode-pasted-literally failure recurred** (Nth
+    instance; see `blocker.sql`, `posts_feed`, `friends.sql`, Concept 1's
+    `create index ...`): the first submitted draft was the review sketch
+    verbatim, including `<label built from ...>` (a syntax error) and
+    `raise exception '...'` — the latter being the dangerous one, since it
+    parses fine and would have shipped a literal three-dot error message to
+    clients. Tell to watch for: **any line containing `...` or
+    `<angle brackets>` was shape, not text.**
+  - **Verified DB-level via REST, 7/7**
+    (`scratchpad/verify_resolve_region.py`, signed in as dummy1probe):
+    Sydney → `AU`/`AU-NSW`/`"New South Wales, Australia"`; Denver →
+    `US`/`US-CO`/`"Colorado, United States of America"`; mid-Pacific
+    `(-150, 0)` → `[]`; London → `GB`/`null`/`"United Kingdom"` and Paris →
+    `FR`/`null`/`"France"` (both exercise the null-state branch, proving
+    `concat_ws` doesn't emit a leading `", "`, and Paris re-confirms Concept
+    1's `ISO_A2_EH` fix); anon-key call → `403` `28000`; and lat/lng passed
+    **swapped** → `[]`. Live definition read back out of `pg_proc`
+    (`prosecdef = false`, `provolatile = 's'`) rather than trusting
+    `db push`, per Concept 1's lesson that "applied" is not proof.
+  - **Correction to a claim Claude made during this review: the
+    `revoke execute ... from public` line does *not* restrict `anon`.**
+    Verified via `has_function_privilege`: after the revoke, `anon` still
+    holds EXECUTE. Supabase's project bootstrap sets
+    `alter default privileges in schema public grant execute on functions to
+    anon, authenticated, service_role` — an **explicit grant to a role**,
+    which a revoke from `PUBLIC` does not touch. So the `auth.uid()` guard is
+    not defence-in-depth, it is the **only** layer stopping an anon caller
+    (which is what the `403 28000` result proves — a permission error would
+    have looked different). Same is true of `friend_count` and the two
+    friends RPCs. This is the *third* instance of the same lesson in this
+    project: **grants in migrations document intent; they are not the
+    enforcement layer** (see the Phase 4.7 table-grant finding and Concept
+    1's `pg_policy` role-scope finding). A follow-up migration adding
+    `revoke execute ... from anon` across all four RPCs would make the
+    privilege layer real — **not done, offered and deferred**.
+  - **Accepted trade-off (user's explicit call, 2026-08-03): the 9-country
+    admin-1 coverage stays as-is.** Full global state coverage would mean
+    reseeding from Natural Earth **1:10m** admin-1 (~4,600 features, full
+    world, `iso_3166_2` field present) — same Concept 1 pipeline, a pure data
+    swap with no change to `resolve_region` — with `ogr2ogr -simplify` to keep
+    the dump size sane, since containment accuracy only matters to within a
+    few hundred metres of a border. Offered with a measure-first plan
+    (feature count + dump size at several tolerances before committing);
+    user declined for now. **Consequence to remember: for ~168 of 177
+    countries the state tier never matches and the state→country→most-liked
+    fallback goes straight to country.** AU *is* covered, so every current
+    test account resolves a state.
+  - **Client-side region resolution was considered and rejected** in the same
+    discussion (user asked whether the device could be trusted to report its
+    own country). Trust was never the blocker — the Phase 5 kickoff already
+    accepted region as a client-trusted column, same tier as `rating`. The
+    blockers are: (1) `Location.reverseGeocodeAsync` delegates to the
+    *platform* geocoder (Apple's vs Android's), which return different display
+    strings for the same place, so an equality filter on `region_state_code`
+    would **silently partition the userbase into per-platform cohorts that
+    can't see each other's feeds** — a far worse failure than sparse coverage,
+    and invisible without cross-platform testing; (2) reverse geocoding is
+    unsupported on web, and `app.json` ships `"output": "single"`;
+    (3) `expo-localization`'s `regionCode` is the device's *configured*
+    region, not its location, and is country-only. `region_boundaries`'
+    single canonical ISO 3166-2 vocabulary is precisely what makes the
+    region filter a simple equality. **Keep these two axes separate when this
+    recurs: "can we trust the client?" and "should the client compute it?"
+    are different questions with different answers here.**
+  - **Emergent property worth exploiting in Concept 4**: `state_code` comes
+    back country-prefixed (`AU-NSW`, `US-CO`, ISO 3166-2), so state codes are
+    globally unique on their own — the Explore region filter can match
+    `region_state_code` alone, with no compound `country_code` match needed.
+  - **Concept 2 is complete.** Next per the plan: Concept 3, the client hook
+    that calls `resolve_region` once per session at the `useEnsureTimezone`
+    trigger point and caches the result for both post-tagging and Explore
+    filtering. Note `expo-location` is **not yet a dependency** — it needs
+    introducing (and per `memory/CLAUDE.md`, asking first) in Concept 3. Also
+    worth guarding there: passing lat/lng swapped returns `[]` rather than an
+    error, indistinguishable from mid-ocean, because SRID 4326 is metadata
+    and `ST_Point` validates nothing.
