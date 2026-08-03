@@ -1059,3 +1059,59 @@ inherited free from the base table's RLS.
 Also noted while there: **the history screen is no longer a tab** — it was
 folded into `app/(tabs)/profile.tsx` (chart + post history). Current tabs are
 Explore, Home, Profile. The user's intended structure adds a Friends tab.
+
+---
+
+Phase 4.8 (friends feed + Friends tab) **built and verified 2026-08-03, same
+day it was identified — COMPLETE.** Built by Claude at the user's request.
+
+- **Migration `supabase/migrations/20260803110000_posts_feed_friends_view.sql`**
+  — a new `security_invoker = on` view `posts_feed_friends`, the same
+  projection as `posts_feed` (including the region columns) plus
+  `where exists (select 1 from friendships f where f.user_id = auth.uid() and
+  f.friend_id = p.user_id)`.
+  - **This is the whole point, and it is the reusable idea**: the anonymity
+    strip lives in the **SELECT projection**, so the `WHERE` clause can still
+    filter on the real `p.user_id`. A client-side
+    `.in('user_id', friendIds)` against `posts_feed` would have **silently
+    dropped every anonymous post by a friend** — no error, just a post quietly
+    missing — breaking the promise `ANONYMOUS_POST_WARNING` already makes at
+    compose time. **No `security definer` needed**; a view only rewrites what
+    it *outputs*, never what its own predicates can see. Same property that
+    lets moderation resolve a report on an anonymous post to its real author.
+  - `friendships`' own SELECT policy is `user_id = auth.uid()`, which the
+    subquery aligns with exactly, so `security_invoker` is correct here rather
+    than a limitation to work around.
+  - **New object → explicit `grant select ... to authenticated` required**
+    (the Phase 3 `profiles_public` lesson; `create or replace` preserves
+    grants, `create` does not). Verified live via `pg_class.reloptions` →
+    `{security_invoker=on}` and 17 columns, per the standing rule that
+    `db push` reporting success is not proof.
+  - **`has_table_privilege` again showed `anon` holding SELECT** despite the
+    grant naming only `authenticated` — 4th instance of Supabase's default
+    privileges overriding migration grants. **Harmless for this view
+    specifically**: with a null `auth.uid()` the friendship `exists` matches
+    nothing, so anon gets zero rows *structurally*, not by policy. Verified.
+    Unlike `posts_feed`, this view is inherently anon-safe.
+- **`hooks/useFriendsFeed.ts`** — infinite query, `created_at` keyset,
+  hidden-post filter, same `POST_POLL_INTERVAL_MS`. **Deliberately has no
+  `user_id` filter at all**: the view *is* the scope, enforced server-side, and
+  adding a client filter would reintroduce the exact bug the view exists to
+  prevent. *When a view already restricts rows, filtering again client-side is
+  not defence in depth — it is a second, weaker rule that can disagree with the
+  first.*
+- **`app/(tabs)/friends-feed.tsx`** + a Friends tab (FontAwesome `users`)
+  between Home and Profile. **Named `friends-feed.tsx`, not `friends.tsx`, on
+  purpose: Expo Router route groups do not add a URL segment**, so
+  `app/(tabs)/friends.tsx` would collide with the existing `app/friends.tsx`
+  (the friends *list*), both resolving to `/friends`.
+- **Verified DB-level via REST, 7/7** (`scratchpad/verify_friends_feed.py`;
+  dummy1probe as viewer, friends with dummy2 + dummy3, not with dummy5):
+  friend's normal post present; **friend's anonymous post present with
+  `user_id` null and author null** — the case the whole design hinged on;
+  non-friend's post absent; own post absent (the mirrored `friendships` rows
+  mean `f.user_id = auth.uid()` yields friends, never yourself); anon key → 0
+  rows. Verified in-app on device afterwards, anonymous post included.
+- **Test-data change made to enable the anonymity test**: dummy3's post for
+  `local_date = 2026-08-03` was flipped to `is_anonymous = true` via their own
+  session (owner-update RLS, entry window open). Still set that way.

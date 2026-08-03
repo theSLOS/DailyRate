@@ -128,6 +128,13 @@ export type Database = {
             referencedColumns: ['id'];
           },
           {
+            foreignKeyName: 'comments_post_id_fkey';
+            columns: ['post_id'];
+            isOneToOne: false;
+            referencedRelation: 'posts_feed_friends';
+            referencedColumns: ['id'];
+          },
+          {
             foreignKeyName: 'comments_user_id_fkey';
             columns: ['user_id'];
             isOneToOne: false;
@@ -269,6 +276,13 @@ export type Database = {
             columns: ['post_id'];
             isOneToOne: false;
             referencedRelation: 'posts_feed';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'likes_post_id_fkey';
+            columns: ['post_id'];
+            isOneToOne: false;
+            referencedRelation: 'posts_feed_friends';
             referencedColumns: ['id'];
           },
           {
@@ -565,6 +579,28 @@ export type Database = {
         Relationships: [];
       };
       posts_feed: {
+        Row: {
+          author_avatar_url: string | null;
+          author_display_name: string | null;
+          author_username: string | null;
+          comment_count: number | null;
+          created_at: string | null;
+          id: string | null;
+          is_anonymous: boolean | null;
+          like_count: number | null;
+          local_date: string | null;
+          message: string | null;
+          moderation_status: string | null;
+          photo_url: string | null;
+          place_label: string | null;
+          rating: number | null;
+          region_country_code: string | null;
+          region_state_code: string | null;
+          user_id: string | null;
+        };
+        Relationships: [];
+      };
+      posts_feed_friends: {
         Row: {
           author_avatar_url: string | null;
           author_display_name: string | null;

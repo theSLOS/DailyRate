@@ -46,7 +46,7 @@ Implement one concept, verify it in isolation directly against the DB/API (not t
 | 4 | Engagement + blocking/reporting | complete |
 | 4.5 | Anonymous posting | complete |
 | 4.7 | Friends (two-way mutual follow) — relationships only | complete |
-| 4.8 | Friends feed + Friends tab | not started |
+| 4.8 | Friends feed + Friends tab | complete |
 | 5 | Filtering & proximity (region-based, not distance-radius — see memory) | complete |
 | 5.5 | Front server + Redis caching layer | not started |
 | 6 | Notifications | not started |

@@ -50,6 +50,13 @@ export default function TabLayout(): JSX.Element {
         }}
       />
       <Tabs.Screen
+        name="friends-feed"
+        options={{
+          title: 'Friends',
+          tabBarIcon: ({ color }) => <TabBarIcon name="users" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
