@@ -20,4 +20,7 @@ export type FeedPost = {
   author_display_name: string | null;
   author_avatar_url: string | null;
   comment_count: number;
+  region_country_code: string | null;
+  region_state_code: string | null;
+  place_label: string | null;
 };

@@ -76,6 +76,7 @@ export default function PostDetailScreen(): JSX.Element {
               <Text>{ANONYMOUS_AUTHOR_LABEL}</Text>
             )}
             <Text>{formatCoarseAge(post.created_at, new Date())}</Text>
+            {post.place_label && <Text className="text-gray-500">{post.place_label}</Text>}
             <Text>{post.rating}/10</Text>
             <Text>{post.message}</Text>
             {photoUrlQuery.data && (
@@ -88,11 +89,7 @@ export default function PostDetailScreen(): JSX.Element {
             <LikeButton postId={post.id} userId={session?.user.id} likeCount={post.like_count} />
             {session?.user.id !== post.user_id && (
               <>
-                <ReportButton
-                  reporterId={session?.user.id}
-                  targetType="post"
-                  targetId={post.id}
-                />
+                <ReportButton reporterId={session?.user.id} targetType="post" targetId={post.id} />
                 <Pressable
                   onPress={() => {
                     hidePost.mutate(post.id);

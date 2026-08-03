@@ -7,12 +7,15 @@ import { uploadPhoto } from '@/utils/uploadPhoto';
 import { getEntryDate } from '@/utils/getEntryDate';
 import { ComposeForm } from '@/components/ComposeForm';
 import { Centered } from '@/components/Centered';
+import { useSessionRegion } from '@/hooks/useSessionRegion';
+import { LOCATION_RESOLVING_LABEL } from '@/constants/posts';
 import type { JSX } from 'react';
 
 export default function TodayScreen(): JSX.Element {
   const { session, loading: authLoading } = useAuth();
   const entryDate = getEntryDate(new Date());
   const todayPostQuery = useTodayPost(session?.user.id);
+  const regionQuery = useSessionRegion(session?.user.id);
   const upsertPost = useUpsertPost();
   const photoUrlQuery = useSignedPhotoUrl(todayPostQuery.data?.photo_url ?? null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -62,6 +65,11 @@ export default function TodayScreen(): JSX.Element {
         photoPath = await uploadPhoto(values.newPhotoLocalUri);
       }
 
+      // an edit keeps the region it was first posted from, so a post never relocates
+      const existingPost = todayPostQuery.data;
+      const resolvedRegion =
+        regionQuery.data?.status === 'resolved' ? regionQuery.data.region : null;
+
       upsertPost.mutate(
         {
           userId: session.user.id,
@@ -69,6 +77,10 @@ export default function TodayScreen(): JSX.Element {
           message: values.message,
           photoUrl: photoPath,
           isAnonymous: values.isAnonymous,
+          regionCountryCode:
+            existingPost?.region_country_code ?? resolvedRegion?.countryCode ?? null,
+          regionStateCode: existingPost?.region_state_code ?? resolvedRegion?.stateCode ?? null,
+          placeLabel: existingPost?.place_label ?? resolvedRegion?.placeLabel ?? null,
         },
         {
           onError: (error) => Alert.alert('Could not save your entry', error.message),
@@ -90,6 +102,8 @@ export default function TodayScreen(): JSX.Element {
       initialMessage={todayPostQuery.data?.message}
       initialPhotoDisplayUri={photoUrlQuery.data ?? null}
       submitting={isSubmitting}
+      blocked={regionQuery.isLoading}
+      blockedLabel={LOCATION_RESOLVING_LABEL}
       initialIsAnonymous={todayPostQuery.data?.is_anonymous}
       onSubmit={handleSubmit}
     />

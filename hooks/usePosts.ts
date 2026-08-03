@@ -10,6 +10,9 @@ type UpsertPostInput = {
   message: string;
   photoUrl?: string | null;
   isAnonymous: boolean;
+  regionCountryCode: string | null;
+  regionStateCode: string | null;
+  placeLabel: string | null;
 };
 
 export function useTodayPost(
@@ -62,6 +65,9 @@ export function useUpsertPost(): UseMutationResult<Post, PostgrestError, UpsertP
             photo_url: input.photoUrl ?? null,
             local_date: entryDate,
             is_anonymous: input.isAnonymous,
+            region_country_code: input.regionCountryCode,
+            region_state_code: input.regionStateCode,
+            place_label: input.placeLabel,
           },
           { onConflict: 'user_id,local_date' }
         )

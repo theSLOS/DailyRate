@@ -8,6 +8,8 @@ type ComposeFormProps = {
   initialMessage?: string;
   initialPhotoDisplayUri?: string | null; // already a viewable signed URL, resolved by the caller
   submitting: boolean;
+  blocked?: boolean;
+  blockedLabel?: string;
   initialIsAnonymous?: boolean;
   onSubmit: (values: {
     rating: number;
@@ -79,10 +81,14 @@ export function ComposeForm(props: ComposeFormProps): JSX.Element {
 
       <Pressable
         onPress={handleSubmit}
-        disabled={props.submitting}
+        disabled={props.submitting || props.blocked === true}
         className="bg-black rounded-lg p-4 mt-6 items-center"
       >
-        <Text className="text-white">{props.submitting ? 'Saving...' : 'Save'}</Text>
+        <Text className="text-white">
+          {props.submitting
+            ? 'Saving...'
+            : (props.blocked === true && props.blockedLabel) || 'Save'}
+        </Text>
       </Pressable>
     </View>
   );

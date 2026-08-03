@@ -302,6 +302,8 @@ export type Database = {
           photo_url: string | null;
           place_label: string | null;
           rating: number;
+          region_country_code: string | null;
+          region_state_code: string | null;
           user_id: string;
         };
         Insert: {
@@ -318,6 +320,8 @@ export type Database = {
           photo_url?: string | null;
           place_label?: string | null;
           rating: number;
+          region_country_code?: string | null;
+          region_state_code?: string | null;
           user_id: string;
         };
         Update: {
@@ -334,6 +338,8 @@ export type Database = {
           photo_url?: string | null;
           place_label?: string | null;
           rating?: number;
+          region_country_code?: string | null;
+          region_state_code?: string | null;
           user_id?: string;
         };
         Relationships: [
@@ -572,7 +578,10 @@ export type Database = {
           message: string | null;
           moderation_status: string | null;
           photo_url: string | null;
+          place_label: string | null;
           rating: number | null;
+          region_country_code: string | null;
+          region_state_code: string | null;
           user_id: string | null;
         };
         Relationships: [];

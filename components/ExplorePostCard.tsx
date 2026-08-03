@@ -16,12 +16,15 @@ export function ExplorePostCard({ post }: ExplorePostCardProps): JSX.Element {
       <Pressable className="border border-gray-300 rounded-lg p-3 mb-3">
         {post.user_id !== null ? (
           <Link href={{ pathname: '/profile/[id]', params: { id: post.user_id } }}>
-            <Text>{post.author_display_name ?? post.author_username ?? ANONYMOUS_AUTHOR_LABEL}</Text>
+            <Text>
+              {post.author_display_name ?? post.author_username ?? ANONYMOUS_AUTHOR_LABEL}
+            </Text>
           </Link>
         ) : (
           <Text>{ANONYMOUS_AUTHOR_LABEL}</Text>
         )}
         <Text>{formatCoarseAge(post.created_at, new Date())}</Text>
+        {post.place_label && <Text className="text-gray-500">{post.place_label}</Text>}
         <Text>{post.rating}/10</Text>
         <Text>{post.message}</Text>
         {photoUrlQuery.data && (
