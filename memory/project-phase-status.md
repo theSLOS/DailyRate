@@ -711,11 +711,136 @@ at-login, never persist raw coordinates, widen state→country→most-liked).
     back country-prefixed (`AU-NSW`, `US-CO`, ISO 3166-2), so state codes are
     globally unique on their own — the Explore region filter can match
     `region_state_code` alone, with no compound `country_code` match needed.
-  - **Concept 2 is complete.** Next per the plan: Concept 3, the client hook
-    that calls `resolve_region` once per session at the `useEnsureTimezone`
-    trigger point and caches the result for both post-tagging and Explore
-    filtering. Note `expo-location` is **not yet a dependency** — it needs
-    introducing (and per `memory/CLAUDE.md`, asking first) in Concept 3. Also
-    worth guarding there: passing lat/lng swapped returns `[]` rather than an
-    error, indistinguishable from mid-ocean, because SRID 4326 is metadata
-    and `ST_Point` validates nothing.
+  - **Concept 2 is complete.**
+
+- **Concept 3 (the once-per-session client hook) built + verified on web *and*
+  native 2026-08-03.** `types/region.ts` (`Region` + a `RegionResult`
+  discriminated union) and `hooks/useSessionRegion.ts`, written by the user
+  under guide+review. New dependency **`expo-location` `~19.0.8`**, added via
+  `npx expo install` (not `npm install` — `expo install` consults Expo's SDK
+  compatibility table and writes tilde ranges). Chosen because it is the only
+  option that works on iOS, Android **and web** (it wraps
+  `navigator.geolocation` there, which matters given `app.json`'s
+  `"output": "single"`) and runs in **Expo Go**, preserving the no-custom-dev-
+  client constraint standing since Phase 2. Only its `reverseGeocodeAsync` is
+  the API rejected in Concept 2's discussion; `getCurrentPositionAsync` is not.
+  - **Call site: LAZY, a deliberate deviation from the recorded Phase 5 plan.**
+    The plan said resolve at the `useEnsureTimezone` trigger point
+    (`app/(tabs)/_layout.tsx`), which would throw an OS location prompt the
+    instant a user signs in — the worst possible moment, since iOS's prompt is
+    one-shot and a reflexive "Don't Allow" is effectively permanent. Instead
+    the consumers (compose in Concept 4, the Explore proximity toggle in
+    Concept 5) each call `useSessionRegion()` and TanStack dedupes. **Nothing
+    calls it as of this concept** — that is expected under lazy.
+  - **Lazy forced a second cache option that the layout approach would have
+    hidden: `gcTime: Infinity` alongside `staleTime: Infinity`.** `staleTime`
+    only stops refetching *while an observer is mounted*; TanStack v5's
+    `gcTime` defaults to **5 minutes**, so with transient consumers the entry
+    would be garbage-collected between compose and Explore and re-resolve
+    (fresh GPS + RPC, and a fresh permission prompt on web). This is the first
+    query in the repo whose consumers mount/unmount independently, which is
+    why no prior hook needed `gcTime`.
+  - **Permission denial returns a value, it does not throw.** TanStack retries
+    failed queries 3× by default; throwing on denial would mean three
+    permission checks per mount. Hence `{ status: 'unavailable', reason:
+    'permission-denied' | 'no-match' }` rather than `Region | null` — the
+    reason is what the UI acts on ("Enable location" is actionable, mid-ocean
+    isn't), and the union gives exhaustiveness that `null` can't.
+  - **Design question answered + recorded (user asked whether region should
+    persist to AsyncStorage like `useHiddenPosts`): NO — decided data vs.
+    derived data.** A hide is a *user decision* with no other source of truth,
+    so AsyncStorage *is* its database. Region is *derived*, with a cheap
+    authoritative source (device + RPC); re-deriving on next launch yields a
+    **fresher** answer, not a lost one. Persisting would also convert the
+    plan's *bounded* staleness ("stale until app restart") into unbounded
+    ("stale forever until manually invalidated"), and would add a location
+    at-rest surface to a pipeline defined by not having one. `lib/queryClient.ts`
+    has no persister, so memory-only caching already delivers exactly
+    "resolve once per app launch". **If cold-start latency ever justifies
+    persistence, the fix is TanStack's persister on the QueryClient, not a
+    bespoke AsyncStorage read in this hook.** General rule extracted: *who
+    authored the fact?* User-authored → persist; machine-derived → re-derive
+    (cf. `useSignedPhotoUrl` minting fresh URLs rather than caching them).
+  - **Correction to a claim Claude made mid-concept, worth remembering because
+    it is the opposite of the `posts_feed` case**: Supabase's type generator
+    types `returns table` RPC columns as **non-null** —
+    `Returns: { country_code: string; place_label: string; state_code: string }[]`
+    — which is *factually wrong*, since Concept 2 proved London/Paris return
+    `state_code: null`. Views generate all-nullable (the Phase 4.5 `FeedPost`
+    problem); RPCs generate all-non-null. Hand-writing the boundary type is
+    right both times, but for **opposite** reasons: the generator is
+    under-confident about views and over-confident about functions. A comment
+    on `Region` records this. The `snake_case → camelCase` mapping in the hook
+    is where the wrong upstream type gets absorbed, silently and correctly
+    (assigning `string` into `string | null` is legal).
+  - **Bug parade, all recurring kinds**: the sketch's `queryFn` closing brace
+    was left in place while the body grew beneath it, so the GPS/RPC/return
+    statements ended up as bare statements inside the `useQuery({...})` object
+    literal (same family as Phase 4's `ScrollView` prop incident — *an edit
+    that should have extended a block instead terminated it*); both `reason`
+    values written as free text (`'Location permission not granted'`,
+    `'no match'`) instead of the union's literals; `region` returned but never
+    constructed; `getCurrentPositionAsync({Location.Accuracy.Lowest})` missing
+    its `accuracy:` key; and `placelabel` (lowercase L) in `types/region.ts` —
+    **the one bug `tsc` could not catch**, since it was internally consistent.
+    Claude applied the fixes at user request after the review.
+  - **Verified on web (all four cases) then native**: granted → `New South
+    Wales, Australia — AU / AU-NSW`; denied → `unavailable: permission-denied`
+    with the dialog appearing once (no retry storm); cached → tab away/back
+    with no second prompt and no second RPC; and both platforms. Done via a
+    **temporary probe** rendered at the top of `app/(tabs)/explore.tsx`, since
+    under lazy there is no real call site until Concept 4 — probe removed
+    afterwards, `explore.tsx` confirmed byte-identical to its committed state.
+    The probe had to sit *above* the feed's early returns because the Explore
+    feed is currently empty (checked via REST: dummy1probe can see 3 posts,
+    all their own, everything else aged past 36h) — **this app's test data
+    expires, so any cross-user verification needs fresh posts first.**
+
+- **Pre-existing native breakage found and fixed 2026-08-03 while verifying
+  Concept 3 — unrelated to Phase 5, and it had been broken silently for
+  weeks.** Expo Go on device failed to load at all with
+  `Syntax Error: private properties are not supported` at bundle parse time.
+  Root cause: `package.json` declared **`"babel-preset-expo": "^57.0.1"`** —
+  three majors ahead of Expo SDK 54, which expects `~54.0.10`. That preset
+  decides what modern syntax gets down-levelled; v57 targets SDK 57's newer
+  Hermes and stops transpiling `#private` class fields, so they reached
+  SDK 54's older Hermes intact.
+  - **Why nobody noticed**: web runs in the browser engine, which supports
+    private fields natively. Every verification pass since Phase 4 (Playwright,
+    `npm run web`, REST) went straight past a broken native bundle. The last
+    commit touching `package.json` was Phase 3 (`6ddb8ea`); the Phase 4 build
+    log already flagged an `npm install` that rewrote `package-lock.json` with
+    ~300 lines of unrelated bumps. **Lesson: the "verify against the DB, not
+    through the app" discipline is right for SQL but has a blind spot — an
+    entire runtime platform can rot unobserved. Re-test on device after any
+    dependency change.**
+  - **Fixed with `npx expo install --fix` then `npx expo start -c`** (the `-c`
+    is mandatory — Metro caches *transformed output*, so a corrected preset
+    still serves the broken bundle otherwise). Net:
+    `expo ~54.0.34→~54.0.36`, `babel-preset-expo ^57.0.1→~54.0.10`,
+    `eslint-config-expo ^56.0.4→~10.0.0`.
+  - **Root cause of the root cause: a caret range on an SDK-coupled package.**
+    `^57.0.1` lets npm resolve anything in the 57 line. `npx expo install`
+    writes tilde ranges precisely because these packages are pinned to an SDK
+    — which is why the new `expo-location ~19.0.8` line is correct.
+  - **The `eslint-config-expo` realignment then surfaced a hard lint error in
+    a file nobody had touched**: `components/useClientOnlyValue.web.ts` carried
+    `// eslint-disable-next-line react-hooks/set-state-in-effect`, a rule that
+    only exists in the React-Compiler-era `eslint-plugin-react-hooks` v6 that
+    `eslint-config-expo@56` pulled in. **ESLint errors on a disable comment
+    naming a rule it cannot find — the suppression itself became the failure**,
+    and would have blocked the Husky gate. Removed; the `setState`-in-effect
+    there is deliberate SSR hydration detection and nothing flags it under the
+    correct config. Worth remembering: *a disable comment is itself
+    lint-checked, so suppressions are a hidden coupling to a plugin version.*
+  - Committed separately as a `chore:` from Concept 3's `feat:` — the drift
+    predates Phase 5 and would break native for anyone cloning the repo, so a
+    future bisect for "when did native break" should not land on a
+    region-resolution commit.
+
+- **Concept 3 is complete.** Next: Concept 4 — the write path (tag new posts
+  with the cached region at compose time) plus surfacing the location when
+  viewing a post. This is where `useSessionRegion` gets its first real call
+  site. Still unguarded and worth handling there: passing lat/lng swapped
+  returns `[]` rather than an error, indistinguishable from mid-ocean, because
+  SRID 4326 is metadata and `ST_Point` validates nothing.
