@@ -1115,3 +1115,209 @@ day it was identified — COMPLETE.** Built by Claude at the user's request.
 - **Test-data change made to enable the anonymity test**: dummy3's post for
   `local_date = 2026-08-03` was flipped to `is_anonymous = true` via their own
   session (owner-update RLS, entry window open). Still set that way.
+
+---
+
+Phase 5.5 (front server / API gateway) **started 2026-08-08**. Scope grew
+during planning into a full gateway (see `[[front-server-caching-decisions]]`)
+— every read/write except auth routes through a new `server/` Express app,
+same repo, no workspaces. Full 11-concept build sequence approved via
+`/plan`, saved at `C:\Users\user\.claude\plans\yep-we-can-keep-composed-eich.md`.
+
+- **Concept 1 (server skeleton + JWT-forwarding plumbing) built + REST-verified
+  2026-08-08.** New `server/` package (ESM, `tsx watch` for dev, `pino` for
+  logging — all three picked as the modern-default option at kickoff, no
+  counter-argument raised). Files: `lib/logger.ts` (shared pino instance),
+  `lib/errors.ts` (`AppError` — single source of truth for the `{ error:
+  { code, message } }` shape), `lib/supabaseClient.ts`
+  (`getClientForRequest(jwt)` — **the crux of this concept**: a fresh
+  `createClient` per call, JWT forwarded via `global.headers.Authorization`,
+  `persistSession`/`autoRefreshToken` both off since there's no session to
+  manage server-side), `middleware/requireAuth.ts` (checks `Bearer` shape
+  only, does **not** verify the token — auth stays entirely Supabase's job;
+  attaches `req.jwt` via a `declare global` augmentation),
+  `middleware/errorHandler.ts` (must be the last `app.use`, registered with
+  all 4 params even though `next` is unused — Express detects error
+  middleware by arity, not position or name), `middleware/requestLogger.ts`
+  (`pino-http`, attaches `req.log` + `endpoint` per request — this is what
+  makes `errorHandler`'s `req.log` calls work), `routes/me.ts` (`GET
+  /api/me/profile`, deliberately relies on `profiles`' existing owner-only
+  RLS alone, no `.eq('id', ...)` — same convention as `usePostHistory`
+  pre-Phase-3 — because a per-viewer-correct result *without* a manual filter
+  is the actual thing being proven).
+  - **A real bug pattern recurred in a new file type**: `server/.eslintrc.json`
+    was first written as a bare `"overrides": [...]` fragment with no
+    wrapping `{ }` — invalid JSON, and even fixed structurally it was the
+    wrong shape for a directory-nested config (the `overrides`/`files`
+    wrapper is for one config file targeting multiple globs; a config file
+    that already lives inside `server/` doesn't need to re-select itself).
+    Same root cause as every prior instance of this pattern across the
+    project (prose-as-SQL, `...` placeholders, JSX props pasted as siblings)
+    — a suggested snippet copied into a new location without adapting it to
+    that location's shape. Fixed directly since it was pure config, not app
+    logic — content is just `{ "env": { "node": true }, "parserOptions": {
+    "sourceType": "module" } }`.
+  - **Four more real bugs caught in `lib/supabaseClient.ts`'s first draft**,
+    none of them typos in isolation but each a genuine functional break:
+    missing quotes around the `@supabase/supabase-js` specifier (syntax
+    error); `'Bearer ${jwt}'` in single quotes instead of backticks — sent
+    the **literal 8-character string** `Bearer ${jwt}` as the header on every
+    request, never the real token, silently defeating the entire concept;
+    `persistentSession` instead of the real option name `persistSession`;
+    and `import { assert } from 'node:console'` instead of `node:assert` —
+    `console.assert` only logs a warning and does **not** throw, so the
+    intended "fail loud at boot if env vars are missing" guard would have
+    silently done nothing and let `undefined` values flow into `createClient`.
+  - **One more instance in `middleware/requestLogger.ts`**: `from 'pinohttp'`
+    (missing the hyphen) instead of the real package name `'pino-http'`.
+  - **`.js` extensions on relative imports, required by `"moduleResolution":
+    "NodeNext"`**: the user independently added `.js` to a relative import in
+    `requireAuth.ts` (`'../lib/errors.js'`) before being told to — correct,
+    and it caught a gap in the `index.ts` pseudocode given earlier in the
+    session, which was missing them on all five of its relative imports.
+    `tsx` resolves extensionless relative paths fine in dev (silently
+    permissive); `tsc` (the `build` script) would hard-fail on it
+    (`TS2835`). Worth remembering: a working `npm run dev` is not proof the
+    `build` script would succeed.
+  - **Two non-code environment gotchas hit during the actual REST
+    verification pass, worth remembering distinctly from the code bugs
+    above**: (1) `server/.env` was created empty (0 bytes) during scaffolding
+    — `PORT`'s `Number(process.env.PORT || 4000)` fallback silently masked
+    this for the port itself, but `SUPABASE_URL`/`SUPABASE_ANON_KEY` have no
+    fallback, so the first request that actually reached
+    `getClientForRequest` correctly hard-failed via the `assert()` guards,
+    exactly as designed — the *system* worked, the *config* didn't; fixed by
+    copying real values from the root `.env` (same Supabase project, no
+    `EXPO_PUBLIC_` prefix). (2) **Stopping a backgrounded `npm run dev` task
+    did not kill the actual server process on Windows** — `npm run dev` →
+    `tsx watch` → `node` is a process chain, and killing the top-level shell
+    task left an orphaned `node.exe` still bound to port 4000, serving
+    stale pre-fix state (the empty-env version) for two full test requests
+    before this was noticed via `netstat -ano -p tcp | findstr :4000`
+    revealing the wrong PID still listening. Killed directly via `taskkill
+    /F /PID`. **Standing lesson for this project's Windows environment**: if
+    a server restart does't seem to take effect, don't trust that stopping
+    the background task actually stopped the process — check the real bound
+    PID.
+  - **Verified via REST** (`scratchpad/dummy-accounts.env` — dummy2 through
+    dummy8, credentials supplied by the user this session since prior
+    sessions' scratchpads don't persist; real JWTs fetched the standing way
+    via `/auth/v1/token?grant_type=password`): no header → `401
+    UNAUTHENTICATED`; malformed token → `502 SUPABASE_ERROR` (caught
+    client-side by `supabase-js` itself before any network call — "Expected
+    3 parts in JWT; got 1"); dummy2's real JWT → dummy2's own `profiles` row
+    only; **dummy3's real JWT, same running server process, no restart in
+    between → dummy3's own row, never dummy2's** — the one check that
+    actually proves the per-request-client pattern, not just that auth
+    works at all.
+
+**How to apply:** Concept 1 is fully proven — the per-request JWT-forwarding
+pattern every later concept depends on is verified correct, not assumed.
+Next is Concept 2 (the DB-only shared-feed cache-population migration) per
+the approved plan — no server involvement, verified the same way every prior
+migration in this project has been.
+
+**Automated test infrastructure added 2026-08-08, split app/server** (this
+project's first — everything before this was ad-hoc REST scripts, never
+committed). Two separate runners, deliberately not unified — `jest-expo`
+doesn't have a Vitest equivalent, and Vitest has no real React Native support:
+- **App (`__tests__/`, root): Jest + `jest-expo`.** Installing plain
+  `jest-expo@latest` (57.x) failed outright with an `ERESOLVE` peer-dependency
+  conflict — it expects a newer React/React Native than this project runs.
+  **Expo ties `jest-expo`'s major version to the SDK version** (installed
+  `jest-expo@~54` to match `expo: ~54.0.36`) — worth remembering for any future
+  Expo-ecosystem devDependency, not just this one. First real test:
+  `getEntryDate.test.ts`, covering the entry-window rule's four cases (open,
+  editable-next-morning inclusive-noon, dead zone, month-boundary rollover) —
+  a genuine business-critical pure function, not a throwaway smoke test.
+  `package.json`'s `jest.testPathIgnorePatterns` had to explicitly exclude
+  `/server/` — Jest's default glob otherwise picked up `server/tests/` too and
+  crashed immediately (Vitest's ESM-only exports aren't `require()`-able from
+  Jest's CJS runner). This is the actual app/server boundary the split
+  achieves — without it, one `npm test` at root would try to run both
+  suites through the wrong tool.
+- **Server (`server/tests/`): Vitest + `supertest`.** `server/src/index.ts`
+  was split into `app.ts` (`createApp()` — the configured Express app, no
+  `listen()`) + a thin `index.ts` (imports `createApp`, calls `.listen`) —
+  needed so tests can exercise the real app object via `supertest` without
+  binding a real port. First real test: `concept1.test.ts`, a direct
+  automated translation of the manual curl verification already run for
+  Concept 1 (no-header → 401, garbage token → 502, and **the cross-user
+  isolation check** — two real accounts' JWTs, same `createApp()` instance,
+  asserting the returned `profiles.id` differs — the actual thing worth
+  automating, not just "does it return 200").
+  - **Deliberately integration tests against real Supabase, not mocked** —
+    consistent with this project's standing philosophy (every phase verified
+    against the real DB/API, never mocks) rather than introducing a
+    different testing philosophy just because it's now automated.
+  - **Test credentials handling extended, not reinvented**: `server/.env.test.local`
+    (gitignored — confirmed via `git check-ignore` before writing anything
+    into it, matches the existing `.env*.local` pattern) holds real
+    dummy-account email/password; `server/.env.test.example` (tracked, names
+    only) documents the shape. Same underlying rule as `test-credentials.env`
+    from Phase 4's replies work — real secrets never enter a committed file —
+    just given a permanent home instead of an ephemeral scratchpad one, since
+    this file needs to exist for the next person/session to run `npm test`.
+  - **`dummy2`–`dummy8` credentials this session came directly from the user**
+    (not recoverable from a prior session's scratchpad, which doesn't
+    persist) — saved to this session's `scratchpad/dummy-accounts.env` first,
+    per the standing convention, before being copied into the gitignored
+    `.env.test.local`.
+
+**How to apply going forward:** every future concept (server-side) or hook
+rewire (app-side) should get a real test alongside it in these suites, not
+just the manual REST/in-app verification pass — `npm test` from `server/` and
+`npm test` from the repo root are now both meaningful, both already wired
+into the existing Husky/lint-staged pre-commit surface area (not yet *run* by
+the hook itself — worth deciding later whether pre-commit should require
+tests passing, or just lint/type-check as today).
+
+**Extended same day to cover pure utils, then started on hooks — hooks part
+is INCOMPLETE, left mid-debug, not verified passing.** Four more app-side
+pure-function suites added and confirmed passing (17/17 total):
+`formatCoarseAge.test.ts`, `buildCommentTree.test.ts` (covers the 2-level
+reply-cap nesting, including the reply-to-reply flattening case — trusts the
+already-flattened-input invariant rather than re-deriving it, matching the
+function's own contract), `filterPostsByRange.test.ts` (`jest.useFakeTimers()`
+to pin "now", since the function reads the real clock internally).
+
+- **Hooks need `@testing-library/react-native`'s `renderHook`** (installed —
+  `^14.0.1`) since a custom hook can't be called outside a React render
+  (rules of hooks). New shared test infra: `__tests__/testUtils/
+  renderHookWithQueryClient.tsx` (fresh `QueryClient` per test, `retry:
+  false`, returns the client alongside the render result so tests can seed/
+  inspect cache directly) and `__tests__/testUtils/supabaseMock.ts` (a
+  chainable mock — every filter method returns itself, the object itself is
+  thenable — mimicking how `supabase-js`'s real query builder resolves
+  regardless of chain depth).
+- **`__tests__/useLikes.test.ts` written** — `useLikeStatus` (both boolean
+  outcomes) plus, more importantly, `useToggleLike`'s optimistic-update
+  behavior specifically (flagged twice already in this project's own history
+  as the highest-risk hook to rewire later in Concept 8): asserts the
+  `['likes', ...]` and `['posts', {id}]` cache entries flip *before* a
+  manually-held-open mock promise resolves, then asserts a rejected mutation
+  rolls both back to their pre-mutation values.
+- **Never confirmed passing.** The test run hung indefinitely (background
+  task never produced output, even after several minutes) and was stopped
+  without a clear diagnosis. One real contributing factor was found and fixed
+  along the way — piping the run through `| tail -80` meant nothing could
+  print until the whole process exited, which made an already-slow or
+  genuinely-hung run look like *zero* output from the start; removing the
+  pipe was the right fix for *that* problem specifically, but a second
+  background run still didn't produce output before being stopped, so
+  whether the actual test logic hangs (e.g. a promise in the optimistic-
+  update test that never resolves, or `waitFor` polling against a `QueryClient`
+  that never settles) is still unknown. **Do not assume `useLikes.test.ts`
+  passes — it has never actually run to completion.**
+
+**How to apply:** next session should re-run `npx jest useLikes --verbose`
+(no pipe) directly and actually watch it to completion before touching
+anything else in this file — diagnose for real rather than re-guessing.
+Prime suspects, cheapest to check first: (1) the manually-held-open
+`pendingInsert` promise in the optimistic-update test — if `resolveInsert`
+never actually fires (e.g. a timing bug in the test itself, not the hook),
+`waitFor(() => expect(result.current.isSuccess)...)` at the end would poll
+forever; (2) `act()` from `@testing-library/react-native` wrapping an async
+`mutate()` call incorrectly. The remaining 15 hooks and the 3 non-pure utils
+(`getSignedPhotoUrl`, `uploadPhoto`, `pickAndCompressImage`) are untouched —
+deliberately deferred, not forgotten.

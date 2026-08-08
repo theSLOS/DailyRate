@@ -61,12 +61,23 @@ Update the status column as phases complete.
 
 ## Server & caching principles (Phase 5.5 — not built yet)
 
-A future front server (Node/Express) will sit between the client and Supabase
-for caching and a narrower API surface. It is **not being built now** — these
-are standing decisions so the design doesn't drift when the phase starts. Auth
-and RLS stay entirely Supabase's job; the server forwards the user's JWT
-unmodified (`createClient(..., { global: { headers: { Authorization: jwt } } })`)
-and never uses `service_role` for user-facing requests.
+A future front server (Node/Express) will sit between the client and Supabase.
+It is **not being built now** — these are standing decisions so the design
+doesn't drift when the phase starts. Auth and RLS stay entirely Supabase's job;
+the server forwards the user's JWT unmodified
+(`createClient(..., { global: { headers: { Authorization: jwt } } })`) and
+never uses `service_role` for user-facing requests.
+
+- **Full API gateway (resolved 2026-08-08): the client talks to Supabase
+  directly for nothing except auth** (sign-in/sign-up, token refresh via
+  `supabase-js`). Every other read and write — likes, comments, blocks,
+  reports, friend requests, post CRUD, photo upload, region resolution — routes
+  through the front server instead of calling Supabase directly. This is not a
+  security change (RLS is already the real boundary, proven in Phase 4.7); it's
+  for centralized logging, insulating the client from Supabase's shape, and a
+  single place to add logic later. See `[[front-server-caching-decisions]]` for
+  the full reasoning, the open Storage-proxying question, and why this phase
+  needs its own concept breakdown rather than one sitting.
 
 - **Caching governing rule:** cache server-side (Redis) only when a result is
   shared across many requesters (region feed, most-liked, a post's comment
@@ -96,6 +107,15 @@ and never uses `service_role` for user-facing requests.
 - **Front server must be stateless:** no per-instance request state (rate-limit
   counters, ad-hoc caches in instance memory). Any shared counter lives in
   Redis. This keeps horizontal scaling an infra change, not a code rewrite.
+- **Rate limiting (resolved 2026-08-08, not built):** the front server also
+  proxies three specific writes — comment creation, report submission, photo
+  upload — solely so it can rate-limit them via a Redis counter keyed by
+  `(user_id, action)`. Every other mutation (posts, likes, blocks, friend
+  requests) still goes client → Supabase directly, unchanged. Post
+  creation/edit is deliberately excluded — it already has a natural throttle
+  (`unique(user_id, local_date)` + the entry window); don't add a per-minute
+  limiter there. See `[[front-server-caching-decisions]]` for the full
+  writeup; thresholds are still undecided.
 - **Secrets** (`service_role` key, Redis URL, JWT secret, future payment keys)
   live only in server-side env vars, never in the Expo bundle — reinforces the
   "Hard rule" in `docs/database-architecture.md` §1.
@@ -183,6 +203,8 @@ utils/                 # Pure functions with no side effects
 | Prettier | Consistent formatting |
 | VS Code: format on save | Instant feedback while writing |
 | Husky + lint-staged | Pre-commit gate: lint + type-check before any commit lands |
+| Jest + `jest-expo` (added Phase 5.5) | App-side automated tests, `__tests__/` at root — `npm test`. `jest-expo`'s version must track the installed `expo` SDK version (`~54` here), not `latest` — a version mismatch fails to install at all (`ERESOLVE`). |
+| Vitest + `supertest` (added Phase 5.5) | Server-side automated tests, `server/tests/` — `npm test` from `server/`. Integration-style against real Supabase (dummy test accounts), not mocked — matches this project's standing DB-verification philosophy. Credentials in gitignored `server/.env.test.local` (see `server/.env.test.example`). |
 
 ---
 
