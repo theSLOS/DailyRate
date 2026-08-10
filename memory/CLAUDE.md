@@ -104,6 +104,15 @@ never uses `service_role` for user-facing requests.
   - Net effect: both client filters are no-ops on anonymous posts (their
     `user_id` is null), and the **front server does zero per-viewer work on
     feeds** — it's a dumb Redis proxy handing one identical blob to everyone.
+- **Feed personalization ceiling (resolved 2026-08-10):** shared feeds
+  (Explore / region / most-liked) stay non-personalized **permanently** — the
+  identical-blob rule above is a standing guarantee, not a convenience. The
+  **friends feed is exempt** (already personal, client-cached, never in Redis).
+  Future ML ranking on shared feeds must be offline/batch-scored into a
+  Postgres column the RPC orders by, never per-request. Rewriting the gateway
+  in Python for ML/analytics was considered and rejected; when ML lands
+  (post-deployment) it's a separate Python inference service the Node gateway
+  calls. See `[[front-server-caching-decisions]]`.
 - **Front server must be stateless:** no per-instance request state (rate-limit
   counters, ad-hoc caches in instance memory). Any shared counter lives in
   Redis. This keeps horizontal scaling an infra change, not a code rewrite.

@@ -167,3 +167,37 @@ governed by RLS as today — this is a narrow carve-out, not a general
   deliberately not decided yet** — this resolves *where* rate limiting lives
   and *how* it's implemented, not the numbers. Pick those at Phase 5.5 build
   time, informed by real usage if any exists by then.
+
+**Feed personalization ceiling, resolved 2026-08-10 (decision only):** shared
+feeds (Explore / region / most-liked) stay **non-personalized permanently**.
+This is what makes the identical-blob rule above a standing guarantee rather
+than a convenience — the cache is `O(regions)` entries, not `O(users)`, and the
+front server keeps doing zero per-viewer work on feeds. The **friends feed is
+exempt** and may be personalized freely: it was already classified as personal
+under the caching governing rule, lives in the client-side TanStack Query
+cache, and never enters Redis.
+- **Context: this resolves an ML question, not a caching one.** Raised while
+  considering rewriting the front server in Python for future ML. The rewrite
+  was rejected (see below), but it surfaced that "ML-ranked feeds" splits into
+  two very different things, and only one of them is compatible with the
+  cache design.
+- **Any future ML ranking on a shared feed must be offline/batch-scored into a
+  Postgres column** that the feed RPC orders by — never computed per-request.
+  A global quality/interestingness score or moderation flag works fine this
+  way and needs no request-path inference at all. Per-viewer re-ranking is the
+  thing that's excluded, because it destroys the shared blob outright.
+- **Modelling constraint that falls out of the anonymity design**: the
+  `security definer` RPC nulls `user_id` on anonymous posts *before the row
+  leaves Postgres*, so anything ranking downstream of it — server, Redis,
+  client — cannot use author identity as a feature on those posts. Any
+  author-derived signal has to be computed inside Postgres, upstream of the
+  stripping.
+- **Rejected: rewriting the front server in Python** for analytics/ML.
+  Rejected because the gateway's whole job is I/O-bound proxying with no
+  computation in it, so Python buys nothing on the request path, while costing
+  the shared `types/database.ts` type bridge with the Expo client and moving
+  the load-bearing JWT-forwarding pattern onto the much less mature
+  `supabase-py`. When ML does arrive (post-deployment, user's stated timing),
+  the shape is a **separate Python inference service the Node gateway calls**,
+  not a Python gateway. Offline analytics likewise belongs beside the app
+  (a Python workspace reading Postgres directly), not inside the request path.
