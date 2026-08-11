@@ -4,6 +4,7 @@ import type { PostgrestError } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useQuery } from '@tanstack/react-query';
 import { POST_POLL_INTERVAL_MS } from '@/constants/posts';
+import { requireDefined } from '@/utils/requireDefined';
 
 export function usePost(
   postId: string | undefined
@@ -11,13 +12,11 @@ export function usePost(
   return useQuery({
     queryKey: ['posts', { id: postId }],
     queryFn: async (): Promise<FeedPost | null> => {
-      if (!postId) {
-        throw new Error('Post ID is required');
-      }
+      const id = requireDefined(postId, 'Post ID is required');
       const { data, error } = await supabase
         .from('posts_feed')
         .select('*')
-        .eq('id', postId)
+        .eq('id', id)
         .maybeSingle();
       if (error) {
         throw error;

@@ -2,6 +2,7 @@ import { JSX, useState } from 'react';
 import { Image, Pressable, Text, TextInput, View, Switch } from 'react-native';
 import { pickAndCompressImage } from '@/utils/pickAndCompressImage';
 import { ANONYMOUS_POST_WARNING } from '@/constants/posts';
+import { Button } from '@/components/ui/Button';
 
 type ComposeFormProps = {
   initialRating?: number;
@@ -69,9 +70,11 @@ export function ComposeForm(props: ComposeFormProps): JSX.Element {
         <Image source={{ uri: displayedPhotoUri }} className="w-full h-48 rounded-lg mt-4" />
       )}
 
-      <Pressable onPress={handlePickPhoto} className="mt-4">
-        <Text>{displayedPhotoUri ? 'Change photo' : 'Add photo'}</Text>
-      </Pressable>
+      <Button
+        label={displayedPhotoUri ? 'Change photo' : 'Add photo'}
+        onPress={handlePickPhoto}
+        className="mt-4"
+      />
 
       <View className="flex-row items-center justify-between mt-4">
         <Text>Post anonymously</Text>
@@ -79,17 +82,15 @@ export function ComposeForm(props: ComposeFormProps): JSX.Element {
       </View>
       {isAnonymous && <Text className="text-gray-500 mt-2">{ANONYMOUS_POST_WARNING}</Text>}
 
-      <Pressable
+      <Button
+        label={
+          props.submitting ? 'Saving...' : (props.blocked === true && props.blockedLabel) || 'Save'
+        }
         onPress={handleSubmit}
         disabled={props.submitting || props.blocked === true}
-        className="bg-black rounded-lg p-4 mt-6 items-center"
-      >
-        <Text className="text-white">
-          {props.submitting
-            ? 'Saving...'
-            : (props.blocked === true && props.blockedLabel) || 'Save'}
-        </Text>
-      </Pressable>
+        variant="primary"
+        className="mt-6"
+      />
     </View>
   );
 }

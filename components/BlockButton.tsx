@@ -1,6 +1,6 @@
 import { useBlockStatus, useToggleBlock } from '@/hooks/useBlocks';
 import { JSX } from 'react';
-import { Pressable, Text } from 'react-native';
+import { Button } from '@/components/ui/Button';
 
 export type BlockButtonProps = {
   blockerId: string | undefined;
@@ -21,8 +21,10 @@ export function BlockButton({ blockerId, blockedUserId }: BlockButtonProps): JSX
   };
 
   return (
-    <Pressable onPress={handlePress} disabled={!blockerId || blockStatusQuery.isLoading}>
-      <Text>{isBlocked ? 'Unblock' : 'Block'}</Text>
-    </Pressable>
+    <Button
+      label={isBlocked ? 'Unblock' : 'Block'}
+      onPress={handlePress}
+      disabled={!blockerId || blockStatusQuery.isLoading}
+    />
   );
 }

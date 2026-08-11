@@ -6,7 +6,8 @@ import {
   useSendFriendRequest,
 } from '@/hooks/useFriends';
 import { JSX } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { View } from 'react-native';
+import { Button } from '@/components/ui/Button';
 
 export type FriendActionButtonProps = {
   otherUserId: string;
@@ -66,35 +67,45 @@ export function FriendActionButton({
   switch (status) {
     case 'none':
       return (
-        <Pressable onPress={handleSendRequest} disabled={sendRequest.isPending}>
-          <Text>{sendRequest.isPending ? 'Sending…' : 'Add friend'}</Text>
-        </Pressable>
+        <Button
+          label={sendRequest.isPending ? 'Sending…' : 'Add friend'}
+          onPress={handleSendRequest}
+          disabled={sendRequest.isPending}
+        />
       );
 
     case 'outgoing':
       return (
-        <Pressable onPress={handleCancelRequest} disabled={deleteFriendRequest.isPending}>
-          <Text>{deleteFriendRequest.isPending ? 'Cancelling…' : 'Cancel request'}</Text>
-        </Pressable>
+        <Button
+          label={deleteFriendRequest.isPending ? 'Cancelling…' : 'Cancel request'}
+          onPress={handleCancelRequest}
+          disabled={deleteFriendRequest.isPending}
+        />
       );
 
     case 'incoming':
       return (
         <View>
-          <Pressable onPress={handleAccept} disabled={acceptFriendRequest.isPending}>
-            <Text>{acceptFriendRequest.isPending ? 'Accepting…' : 'Accept'}</Text>
-          </Pressable>
-          <Pressable onPress={handleReject} disabled={deleteFriendRequest.isPending}>
-            <Text>{deleteFriendRequest.isPending ? 'Rejecting…' : 'Reject'}</Text>
-          </Pressable>
+          <Button
+            label={acceptFriendRequest.isPending ? 'Accepting…' : 'Accept'}
+            onPress={handleAccept}
+            disabled={acceptFriendRequest.isPending}
+          />
+          <Button
+            label={deleteFriendRequest.isPending ? 'Rejecting…' : 'Reject'}
+            onPress={handleReject}
+            disabled={deleteFriendRequest.isPending}
+          />
         </View>
       );
 
     case 'friends':
       return (
-        <Pressable onPress={handleRemove} disabled={removeFriendship.isPending}>
-          <Text>{removeFriendship.isPending ? 'Removing…' : 'Remove friend'}</Text>
-        </Pressable>
+        <Button
+          label={removeFriendship.isPending ? 'Removing…' : 'Remove friend'}
+          onPress={handleRemove}
+          disabled={removeFriendship.isPending}
+        />
       );
 
     case 'blocked':

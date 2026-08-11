@@ -4,6 +4,7 @@ import type { PostgrestError } from '@supabase/supabase-js';
 import type { FeedPost } from '@/types/posts';
 import { FEED_PAGE_SIZE, POST_POLL_INTERVAL_MS } from '@/constants/posts';
 import { useHiddenPostsIds } from './useHiddenPosts';
+import { requireDefined } from '@/utils/requireDefined';
 
 export function useFriendsFeed(
   userId: string | undefined
@@ -14,9 +15,7 @@ export function useFriendsFeed(
     queryKey: ['posts', { scope: 'friends', userId }],
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam: cursor }): Promise<FeedPost[]> => {
-      if (!userId) {
-        throw new Error('User ID is required');
-      }
+      requireDefined(userId, 'User ID is required');
 
       // the view already restricts to this viewer's friends; no user_id filter here,
       // which would drop friends' anonymous posts (their user_id is nulled by the view)

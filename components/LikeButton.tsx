@@ -1,6 +1,7 @@
 import { useLikeStatus, useToggleLike } from '@/hooks/useLikes';
 import { JSX } from 'react';
-import { Pressable, Text } from 'react-native';
+import { Text, View } from 'react-native';
+import { Button } from '@/components/ui/Button';
 
 export type LikeButtonProps = {
   postId: string;
@@ -22,9 +23,13 @@ export function LikeButton({ postId, userId, likeCount }: LikeButtonProps): JSX.
   };
 
   return (
-    <Pressable onPress={handlePress} disabled={!userId || likeStatusQuery.isLoading}>
-      <Text>{liked ? 'Unlike' : 'Like'}</Text>
+    <View>
+      <Button
+        label={liked ? 'Unlike' : 'Like'}
+        onPress={handlePress}
+        disabled={!userId || likeStatusQuery.isLoading}
+      />
       <Text>{likeCount} likes</Text>
-    </Pressable>
+    </View>
   );
 }

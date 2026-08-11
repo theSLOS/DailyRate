@@ -2,6 +2,7 @@ import { ProfilePublicRow } from '@/types/posts';
 import { PostgrestError } from '@supabase/supabase-js';
 import { useQuery, UseQueryResult } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { requireDefined } from '@/utils/requireDefined';
 
 export function useProfile(
   userId: string | undefined
@@ -9,13 +10,11 @@ export function useProfile(
   return useQuery({
     queryKey: ['profiles', { id: userId }],
     queryFn: async (): Promise<ProfilePublicRow | null> => {
-      if (!userId) {
-        throw new Error('No User Id');
-      }
+      const id = requireDefined(userId, 'No User Id');
       const { data, error } = await supabase
         .from('profiles_public')
         .select('*')
-        .eq('id', userId)
+        .eq('id', id)
         .maybeSingle();
 
       if (error) throw error;

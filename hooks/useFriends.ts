@@ -11,6 +11,7 @@ import type { PostgrestError } from '@supabase/supabase-js';
 import { useBlockStatus } from '@/hooks/useBlocks';
 import type { FriendRequest, Friendship, FriendStatus } from '@/types/friends';
 import type { ProfilePublicRow } from '@/types/posts';
+import { requireDefined } from '@/utils/requireDefined';
 
 export type FriendRequestWithProfiles = FriendRequest & {
   requester: Pick<ProfilePublicRow, 'id' | 'username' | 'display_name' | 'avatar_url'>;
@@ -27,9 +28,7 @@ export function useFriendRequests(
   return useQuery({
     queryKey: ['friendRequests', { sessionUserId }],
     queryFn: async (): Promise<FriendRequestWithProfiles[]> => {
-      if (!sessionUserId) {
-        throw new Error('Session User ID needed');
-      }
+      requireDefined(sessionUserId, 'Session User ID needed');
       const { data, error } = await supabase
         .from('friend_requests')
         .select(
@@ -49,11 +48,9 @@ export function useFriendsIds(
   sessionUserId: string | undefined
 ): UseQueryResult<Set<string>, PostgrestError> {
   return useQuery({
-    queryKey: ['friends', { scope: 'mine', sessionUserId }],
+    queryKey: ['friends', { scope: 'mine', shape: 'ids', sessionUserId }],
     queryFn: async (): Promise<Set<string>> => {
-      if (!sessionUserId) {
-        throw new Error('Session User ID needed');
-      }
+      requireDefined(sessionUserId, 'Session User ID needed');
       const { data, error } = await supabase.from('friendships').select('friend_id');
       if (error) {
         throw error;
@@ -68,14 +65,14 @@ export function useFriendsList(
   sessionUserId: string | undefined
 ): UseQueryResult<FriendshipWithProfile[], PostgrestError> {
   return useQuery({
-    queryKey: ['friends', { scope: 'mine', list: sessionUserId }],
+    queryKey: ['friends', { scope: 'mine', shape: 'list', sessionUserId }],
     queryFn: async (): Promise<FriendshipWithProfile[]> => {
-      if (!sessionUserId) {
-        throw new Error('Session User ID needed');
-      }
+      requireDefined(sessionUserId, 'Session User ID needed');
       const { data, error } = await supabase
         .from('friendships')
-        .select('*, friend:profiles_public!friendships_friend_id_fkey(id, username, display_name, avatar_url)')
+        .select(
+          '*, friend:profiles_public!friendships_friend_id_fkey(id, username, display_name, avatar_url)'
+        )
         .order('created_at', { ascending: false });
       if (error) {
         throw error;
@@ -90,10 +87,8 @@ export function useFriendCount(userId: string | undefined): UseQueryResult<numbe
   return useQuery({
     queryKey: ['friends', { count: userId }],
     queryFn: async (): Promise<number> => {
-      if (!userId) {
-        throw new Error('User ID needed');
-      }
-      const { data, error } = await supabase.rpc('friend_count', { target_user_id: userId });
+      const id = requireDefined(userId, 'User ID needed');
+      const { data, error } = await supabase.rpc('friend_count', { target_user_id: id });
       if (error) {
         throw error;
       }
