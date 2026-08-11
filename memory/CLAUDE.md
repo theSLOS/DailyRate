@@ -48,7 +48,7 @@ Implement one concept, verify it in isolation directly against the DB/API (not t
 | 4.7 | Friends (two-way mutual follow) — relationships only | complete |
 | 4.8 | Friends feed + Friends tab | complete |
 | 5 | Filtering & proximity (region-based, not distance-radius — see memory) | complete |
-| 5.5 | Front server + Redis caching layer | not started |
+| 5.5 | Front server + Redis caching layer | in progress (Concept 1: server skeleton + JWT-forwarding — complete) |
 | 6 | Notifications | not started |
 | 7 | Trust, safety & privacy | not started |
 | 8 | Polish & performance | not started |
@@ -59,12 +59,13 @@ Update the status column as phases complete.
 
 ---
 
-## Server & caching principles (Phase 5.5 — not built yet)
+## Server & caching principles (Phase 5.5 in progress)
 
-A future front server (Node/Express) will sit between the client and Supabase.
-It is **not being built now** — these are standing decisions so the design
-doesn't drift when the phase starts. Auth and RLS stay entirely Supabase's job;
-the server forwards the user's JWT unmodified
+A front server (Node/Express) sits between the client and Supabase. Concept 1
+(server skeleton + JWT-forwarding) is built; the rest below are standing
+decisions for the concepts still to come, so the design doesn't drift
+mid-phase. Auth and RLS stay entirely Supabase's job; the server forwards the
+user's JWT unmodified
 (`createClient(..., { global: { headers: { Authorization: jwt } } })`) and
 never uses `service_role` for user-facing requests.
 
@@ -84,26 +85,15 @@ never uses `service_role` for user-facing requests.
   thread); rely on the client-side TanStack Query cache when the result is
   personal (own history, friends feed, own today's post).
 - **Shared-feed personalization split (resolved 2026-07-25):** a shared feed
-  blob must be *identical for every viewer* to stay cacheable, so the three
-  per-viewer transforms are split by where they're safe to run:
-  - **Anonymity → in the `security definer` RPC, before the row leaves Postgres.**
-    The RPC nulls `user_id`/author/`photo_url` for `is_anonymous` posts
-    *unconditionally* (a shared blob can't use `auth.uid()`), so an anonymous
-    author's identity never reaches Redis, the server, or the client. The base
-    `posts` row always keeps `user_id` — moderation reads it with elevated
-    privilege. Personal per-viewer queries (friends, detail) strip conditionally
-    (`is_anonymous and user_id <> auth.uid()`) so the author still sees their own.
-  - **Self-exclusion → client-side** (cosmetic, non-security): the client drops
-    `post.user_id === myId`.
-  - **Block-filter → client-side** (accepted with residual): the client drops
-    `myBlockedIds.has(post.user_id)`. Accepted *because* feed posts are already
-    public AND blocking stays server-enforced by RLS on every path that matters
-    (post detail, comments, likes, Storage photos). Residual: a blocker who
-    inspects the raw feed payload can see a blocked user's already-public,
-    non-anonymous post text. Low harm; deliberate trade-off, not an oversight.
-  - Net effect: both client filters are no-ops on anonymous posts (their
-    `user_id` is null), and the **front server does zero per-viewer work on
-    feeds** — it's a dumb Redis proxy handing one identical blob to everyone.
+  blob must be *identical for every viewer* to stay cacheable. Anonymity
+  strips happen server-side, in the `security definer` RPC, before the row
+  leaves Postgres — the only place safe from `auth.uid()`. Self-exclusion and
+  the block-filter both happen client-side (cheap; blocking is still
+  server-enforced by RLS everywhere it actually matters — post detail,
+  comments, likes, Storage photos). Net effect: the front server does zero
+  per-viewer work on feeds, it's a dumb Redis proxy handing one identical
+  blob to everyone. Full reasoning, the rejected alternatives, and the
+  accepted block-filter residual: see `[[front-server-caching-decisions]]`.
 - **Front server must be stateless:** no per-instance request state (rate-limit
   counters, ad-hoc caches in instance memory). Any shared counter lives in
   Redis. This keeps horizontal scaling an infra change, not a code rewrite.

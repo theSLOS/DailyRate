@@ -34,20 +34,23 @@ whenever that tooling gets built.
 ## 2. Core tables
 
 ```sql
--- posts (Phase 1)
-id                uuid primary key default gen_random_uuid()
-user_id           uuid references profiles(id) not null
-rating            int not null
-message           text not null
-local_date        date not null
-created_at        timestamptz default now()
-location          geography(Point, 4326)   -- present, unused until Phase 5 proximity filtering
-photo_url         text                     -- storage *path* in the private 'post-photos' bucket, not a public URL
-photo_thumb_url   text
-moderation_status text                     -- drives Phase 3's "live" visibility condition; no moderation workflow sets/transitions it yet
-like_count        int default 0            -- kept in sync by a trigger (Phase 4, §4)
-comment_count     int default 0            -- kept in sync by a trigger (Phase 4, §4)
-place_label       text                     -- human-readable location label; not yet wired to any UI
+-- posts (Phase 1; region_country_code/region_state_code added Phase 5)
+id                  uuid primary key default gen_random_uuid()
+user_id             uuid references profiles(id) not null
+rating              int not null
+message             text not null
+local_date          date not null
+created_at          timestamptz default now()
+location            geography(Point, 4326)   -- present, permanently unused: Phase 5 never stores raw coordinates, see below
+photo_url           text                     -- storage *path* in the private 'post-photos' bucket, not a public URL
+photo_thumb_url     text
+moderation_status   text                     -- drives Phase 3's "live" visibility condition; no moderation workflow sets/transitions it yet
+is_anonymous        boolean not null default false  -- Phase 4.5; drives the posts_feed anonymity strip below, not RLS itself
+like_count          int default 0            -- kept in sync by a trigger (Phase 4, §4)
+comment_count       int default 0            -- kept in sync by a trigger (Phase 4, §4)
+place_label         text                     -- human-readable label from resolve_region(), e.g. "Victoria, Australia"
+region_country_code text                     -- from resolve_region(); null if the post's point matched no boundary
+region_state_code   text                     -- from resolve_region(); null if only the country tier matched (or no state exists)
 
 unique (user_id, local_date)
 index posts_user_id_created_at_idx on (user_id, created_at desc)  -- Phase 4.5 prep; marginal help for user_id-scoped scans (usePostHistory)
@@ -164,6 +167,47 @@ check (user_id <> friend_id)       -- guards against a bug in the accept RPC, no
 ```
 
 **Mirrored: two rows per accepted pair**, both `(A,B)` and `(B,A)`. Deliberate trade-off for an undirected graph — pay 2× storage and one atomic two-row write on the rare accept event, so every friend-list read (which happens on every friends-feed load) is a trivial `where user_id = auth.uid()` index scan instead of an `OR` across two columns. Has **no client write path at all**: mutations only happen through the two `security definer` RPCs in §4.
+
+```sql
+-- posts_feed (Phase 4.5) — a view, security_invoker = on
+id, rating, message, local_date, created_at, like_count, comment_count,
+moderation_status, is_anonymous, photo_url, region_country_code,
+region_state_code, place_label,
+user_id             -- null when is_anonymous and user_id <> auth.uid()
+author_username     -- same null-when-anonymous projection, from profiles_public
+author_display_name -- "
+author_avatar_url   -- "
+```
+
+The Explore feed's actual read path — `security_invoker = on` means it runs as the *querying* user, so `posts`' own RLS (§4, the 36h/owner rule) still applies underneath, unlike `profiles_public`. On top of that it does the **anonymity strip**: for a row where `is_anonymous` and the viewer isn't the author, `user_id`/`author_username`/`author_display_name`/`author_avatar_url` are projected as `null` in the `select` itself — not filtered out, the row still returns, just de-identified. `photo_url` is deliberately **not** stripped (see `20260725080735_anon_photo_path_rework.sql` in §6: the storage path is a random UUID that carries no identity once upload authorization moved to bucket-scoped rather than path-scoped). This same case-when shape is why a shared cache blob is safe to serve to every viewer identically — see `docs/feed-and-caching-architecture.md` §3-4.
+
+```sql
+-- posts_feed_friends (Phase 4.8) — a view, security_invoker = on
+-- same column list and anonymity-strip projection as posts_feed, plus:
+where exists (
+  select 1 from friendships f
+  where f.user_id = auth.uid() and f.friend_id = p.user_id
+)
+```
+
+Same projection as `posts_feed`, restricted to the viewer's friends. The `where` clause filters on the **real** `p.user_id` (not the nulled projection), which is what lets a friend's anonymous post reach this feed at all — a client-side `.in('user_id', friendIds)` run against `posts_feed` would silently drop every anonymous friend post, since their `user_id` already reads `null` by the time the client sees it. This is also the mechanism behind the friends-feed soft-anonymity trade-off — see `memory/friends-feature-decisions.md`.
+
+```sql
+-- region_boundaries (Phase 5) — bundled reference data, not user-generated
+id            serial primary key
+admin_level   text not null check (admin_level in ('country', 'state'))
+country_code  text not null
+state_code    text                     -- null when admin_level = 'country'
+name          text not null
+geom          geography(MultiPolygon, 4326) not null
+
+check ((admin_level = 'country') = (state_code is null))
+index region_boundaries_geom using gist (geom)   -- makes ST_Covers() below an index scan, not a full-table one
+```
+
+Seeded once from Natural Earth boundary polygons via `20260801064023_seed_region_boundaries.sql`, generated offline with `ogr2ogr` and committed as a one-time SQL import; the app never re-derives or updates this data. RLS enabled, `select` open to any `authenticated` user (it's reference data, not per-user). **Country tier (1:110m) is full world coverage, 177 countries. State tier (1:50m) is not**: 294 features covering only 9 countries (`RU, US, IN, ID, CN, BR, CA, AU, ZA`) — accepted 2026-08-03 rather than reseeding from 1:10m, see §8's verification entry below and `memory/anonymity-and-proximity-decisions.md`.
+
+`resolve_region(lng, lat) returns (country_code, state_code, place_label)` — a `stable` (not `security definer`) function, `authenticated`-only via `revoke`/`grant execute`. One `ST_Covers`-driven scan against `region_boundaries`, conditionally aggregated to get both the country and (if one exists) the state tier in a single pass rather than two queries. Returns **zero rows**, not an error, when the point matches no boundary (open ocean, coverage gaps) — the caller's fallback-to-Most-liked logic depends on being able to tell "no region" apart from an error. Called once per post at creation time; the result is persisted onto `posts.region_country_code`/`region_state_code`/`place_label` — **no raw coordinates are ever written to `posts`** (`posts.location` stays permanently unused, see above). Full proximity design and the sparse-region fallback: `memory/anonymity-and-proximity-decisions.md`.
 
 ---
 
@@ -493,6 +537,20 @@ migrations so far:
   third branch (§2/§4).
 - `supabase/migrations/20260728110736_friend_count.sql` — the `friend_count`
   `security definer` function (§4/§7).
+- `supabase/migrations/20260730050811_region_boundaries.sql` — the
+  `region_boundaries` table, its GiST index, and RLS (§2).
+- `supabase/migrations/20260730052915_region_boundries_policy_fix.sql` —
+  rebinds `region_boundaries`' SELECT policy to `authenticated` explicitly
+  (the original didn't specify a role).
+- `supabase/migrations/20260801064023_seed_region_boundaries.sql` — the
+  one-time Natural Earth boundary-polygon data import (§2).
+- `supabase/migrations/20260803074846_resolve_region.sql` — the
+  `resolve_region()` function (§2).
+- `supabase/migrations/20260803095505_add_region_columns_to_public_posts.sql`
+  — `posts.region_country_code`/`region_state_code`, and the `create or
+  replace` of `posts_feed` that adds them to its projection (§2).
+- `supabase/migrations/20260803110000_posts_feed_friends_view.sql` — the
+  `posts_feed_friends` view (§2).
 
 Everything before that (Phases 0–2: `posts`/`profiles` schema, the
 entry-window trigger and function in §3, storage bucket policies in §5) was
@@ -512,18 +570,6 @@ so drift like this doesn't recur.
 - **Admin role / `service_role`-based moderation tooling** (Phase 7) — includes
   the `reports` review/transition UI (data capture exists; reading them does
   not).
-- **Proximity/geo queries** against `location` (Phase 5) — column exists,
-  unused. Redesigned as **region-matching** (same state/country via bundled
-  boundaries + `ST_Contains`), not distance-radius — see
-  `memory/anonymity-and-proximity-decisions.md`.
-- **Anonymous posting** (Phase 4.5) — per-post toggle, hidden from other users
-  but not moderators, enforced **server-side** (a view, like `profiles_public`)
-  — see `memory/anonymity-and-proximity-decisions.md`.
-- **Friends feed and hooks** (Phase 4.7, later concepts) — the schema, RLS and
-  RPCs are **built** (§2/§4); what remains is the client side: a `useFriends`
-  hook, the request/accept UI, and the personal (non-cached, no Redis) friends
-  feed. Anonymous posts will appear there as "Anonymous" — soft anonymity,
-  deliberately accepted — see `memory/friends-feature-decisions.md`.
 - **Blocks do not gate friend requests** (Phase 7) — a blocked user can
   currently send a friend request to the person who blocked them, and since
   `friend_requests`' SELECT policy is "either party", it lands in the blocker's
@@ -555,6 +601,10 @@ so drift like this doesn't recur.
   an N+1 of RPC round trips, and that's the trigger to move to a denormalized
   `profiles.friend_count` column with a counter trigger, the `posts.like_count`
   pattern.
+
+**⚠️ The following is a genuine open question, not an accepted trade-off —
+don't mistake it for one more item in this "deferred by choice" list:**
+
 - **`profiles_public` is readable by `anon`, unauthenticated** (found
   2026-07-28, pre-existing since `20260713092053`, **not yet decided**). A
   `GET /rest/v1/profiles_public` carrying only the publishable key and no
@@ -577,8 +627,14 @@ so drift like this doesn't recur.
 **Now built (previously listed here as deferred):** replies (2-level cap),
 realtime — scoped down to 7s polling + pull-to-refresh, not WebSockets —
 all of blocking and reporting, anonymous posting (`posts.is_anonymous` + the
-`posts_feed` view), and the **friends schema** (`friend_requests`,
-`friendships`, and the two `security definer` RPCs). See §2/§4/§5 and
+`posts_feed` view's strip, §2), the **friends schema and UI** (`friend_requests`,
+`friendships`, the two `security definer` RPCs, the `useFriends` hook, and the
+friends feed/tab via `posts_feed_friends` — anonymous posts appear there as
+"Anonymous", soft anonymity, deliberately accepted, see
+`memory/friends-feature-decisions.md`), and **region-matching proximity**
+(`region_boundaries` + `resolve_region()`, §2 — not the `ST_DWithin` radius
+design originally sketched here, see `memory/anonymity-and-proximity-decisions.md`).
+`posts.location` remains permanently unused. See §2/§4/§5 and
 `memory/project-phase-status.md`.
 
 ---
@@ -703,14 +759,46 @@ app UI, before wiring up any screen:
       the count but still gets `[]` for the friend list** — the public-count /
       private-edges boundary, which needs both assertions to demonstrate; a
       nonexistent uuid returns `0`, so it is not a user-existence oracle.
+- [x] `resolve_region(lng, lat)` — **Verified 2026-08-03**, DB-level via REST,
+      7/7 (`scratchpad/verify_resolve_region.py`). Sydney →
+      `AU`/`AU-NSW`/"New South Wales, Australia"; Denver →
+      `US`/`US-CO`/"Colorado, United States of America"; mid-Pacific
+      `(-150, 0)` → `[]` (zero rows, not an error — the "no region" case);
+      London/Paris → correct country with a null state (proving the label
+      builder doesn't leave a stray leading comma); swapped lat/lng → `[]`.
+      Anon-key call → `403`/`28000` via the function's own `auth.uid() is
+      null` guard — confirmed load-bearing: `revoke execute ... from public`
+      does **not** actually restrict `anon` (Supabase's default privilege
+      grants override it, same finding as the friends RPCs), so the in-body
+      check is the only real enforcement layer here, not the revoke.
+      **Accepted, recorded gap**: only 9 of 177 countries have state-tier
+      boundary coverage (Natural Earth 1:50m); the other ~168 fall straight
+      through to the country tier. Australia is covered.
+- [x] `posts_feed_friends` + `hooks/useFriendsFeed.ts` — **Verified
+      2026-08-03**, DB-level via REST, 7/7
+      (`scratchpad/verify_friends_feed.py`; one viewer, friends with two of
+      three other accounts). Friend's normal post present; **friend's
+      anonymous post present with `user_id`/author null** — the case the
+      whole view design hinges on, since the anonymity strip lives in the
+      `select` projection while the `where exists (select 1 from friendships
+      ...)` clause still filters on the real `p.user_id`; a client-side
+      `.in('user_id', friendIds)` against `posts_feed` instead would have
+      silently dropped every anonymous friend post. Non-friend's post absent;
+      own post absent (the mirrored `friendships` rows mean the `where`
+      clause never matches yourself); anon key → 0 rows structurally (the
+      `exists` subquery matches nothing when `auth.uid()` is null), not by
+      policy — this view needed no anon-specific guard at all. Verified
+      in-app on device afterwards, anonymous post rendering correctly.
 
 ---
 
-## 9. Handoff reconciliation (2026-07-25)
+## 9. Standing clarifications (common misconceptions to avoid)
 
-A planning doc from a separate session (`architecture-decisions-handoff.md`)
-proposed a front server + Redis layer and made several assumptions that **do
-not match this schema**. Recorded here so they aren't re-derived:
+Originally written to reconcile a separate session's planning doc
+(`architecture-decisions-handoff.md`) against this schema — most of it was
+written against a generic ephemeral-social-app model and got several things
+wrong. That doc is long retired; these facts are kept because they're still
+the kind of thing worth stating explicitly rather than re-deriving:
 
 - **No `ratings` table** — it's `posts`.
 - **No `expires_at` column, and posts are never deleted on expiry.**
@@ -718,23 +806,10 @@ not match this schema**. Recorded here so they aren't re-derived:
   `created_at > now() - interval '36 hours'`; expired posts freeze and drop out
   of public view, the row persists, the author still sees it. So there is no
   expiry-cascade for replies and no cache invalidation "tied to `expires_at`."
-- **No rate-limit trigger** ("section 4.2" does not exist). The only write
-  throttle is `unique(user_id, local_date)` + the entry window. A per-minute
-  limiter is the wrong fit for a once-daily journal and was dropped.
-- **No friends/follows feed** — a future idea in the spec, not a table or phase.
-- **Region feed / "Most popular" are unbuilt (Phase 5)** — don't design caches
-  for endpoints that don't exist yet.
-- **Storage is already private + signed URLs** (the handoff's "open question"
-  about public vs. signed is already decided — see §5), and **blocking is
-  already enforced in RLS** (§4).
-- **Shared-cache vs per-user RLS tension** (for the Phase 5.5 front server): a
-  truly shared feed cache can't come from a JWT-forwarded RLS query, because
-  blocking, self-exclusion, and anonymous posting make rows differ per
-  requester. Cache a pre-personalization superset via a `security definer` RPC
-  (never `service_role` for user requests) and personalize per request after
-  the cache read. See the caching principles in `memory/CLAUDE.md`.
-
-The sound parts of the handoff (JWT-forwarding keeps RLS the boundary, front
-server statelessness, the caching governing rule, `tier` as paywall insurance,
-secrets/error-shape/logging) are folded into `memory/CLAUDE.md` and this doc;
-the handoff can be retired.
+- **No rate-limit trigger.** The only write throttle is
+  `unique(user_id, local_date)` + the entry window. A per-minute limiter is
+  the wrong fit for a once-daily journal and was dropped.
+- **Storage is private + signed URLs** (not public), and **blocking is
+  enforced in RLS** (§4).
+- **Shared-cache vs per-user RLS tension** (Phase 5.5 front server): full
+  reasoning is `docs/feed-and-caching-architecture.md` §3-4, not here.

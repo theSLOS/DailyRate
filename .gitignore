@@ -53,5 +53,3 @@ supabase/.temp/
 !/memory/friends-feature-decisions.md
 !/memory/project-phase-status.md
 !/memory/CLAUDE.md
-!/memory/MEMORY.md
-/docs/codebase-walkthrough.md

@@ -7,11 +7,13 @@ kept anonymous. This is the *why* companion to:
 - `memory/front-server-caching-decisions.md`, `memory/anonymity-and-proximity-decisions.md`,
   `memory/friends-feature-decisions.md` — the per-decision build-log entries.
 
-Most of this is **not built yet** — it spans Phase 4.5 (anonymous posting),
-4.7 (friends), 5 (region feed), and 5.5 (front server + Redis). It's written
-down now so the design doesn't drift, and so the reasoning survives even where
-the code doesn't exist yet. Where a decision is settled, the alternatives we
-rejected are recorded alongside it — that's the point of this doc.
+Phases 4.5 (anonymous posting), 4.7/4.8 (friends), and 5 (region feed) are all
+now **built** — the anonymity-strip and personalization-split decisions below
+are the design those were built against, not aspirational. Only Phase 5.5
+(front server + Redis) is still in progress (Concept 1: server skeleton). This
+doc stays regardless — where a decision is settled, the alternatives we
+rejected are recorded alongside it, and that reasoning doesn't stop mattering
+once the code ships.
 
 ---
 
@@ -205,25 +207,13 @@ are actually expensive *and* per-request. The strip is neither.
 
 ## 6. Moderation actions on an anonymous post
 
-Because the author's id is stripped before it leaves Postgres, user-side actions
-split by what's possible without the identity:
-
-- **Report → works.** Targets the *post* (`target_type: 'post', target_id:
-  post.id` — the id is never stripped). No identity is in the report payload;
-  the reporter learns nothing. Moderators resolve it by joining
-  `reports.target_id → posts.user_id` on the base table with elevated privilege
-  — the "hidden from users, visible to moderators" path. This is *why* the base
-  row keeps `user_id`.
-- **Block → impossible by design (not a gap).** Any mechanism to block the
-  hidden author deanonymizes them: (1) `blocks` SELECT is `blocker_id =
-  auth.uid()`, so you'd read back the real `blocked_id`; (2) blocking hides all
-  their content, so their *non-anonymous* posts vanishing from your feed
-  correlates them to the anonymous one. Blocking (act on an identity) and
-  anonymity (withhold it) are directly contradictory.
-- **Recourse: "Hide this post"** — client-side, per-*post* dismissal keyed on
-  `post.id`, no identity involved. Won't suppress future anon posts from the
-  same author (no stable pseudonym is emitted — deliberately). Full block flow
-  stays available on non-anonymous posts.
+Because the author's id is stripped before it leaves Postgres, user-side
+actions split by what's possible without the identity: reporting still works
+(targets the post id, resolved by moderators against the base table's
+never-stripped `user_id`); blocking is impossible by design, not a gap (any
+mechanism to block the hidden author would deanonymize them); "Hide this
+post" is the client-side recourse instead. Full reasoning:
+`memory/anonymity-and-proximity-decisions.md`.
 
 ---
 
@@ -243,21 +233,15 @@ scheme-agnostic and unaffected.
 
 ---
 
-## 8. Friends feed (Phase 4.7)
+## 8. Friends feed (Phase 4.7/4.8 — built)
 
-- **Two-way mutual follow** (request→accept), not one-way — a `friendships`
-  table with an accept state + RLS.
-- **Personal → no Redis.** Direct Supabase query (`user_id in (<my friends>)` +
-  live), client-cached, key `['posts', { scope: 'friends' }]`. Anonymity
-  stripped via the per-viewer conditional projection (§4a).
-- **Anonymity in the friends feed is only *soft* — accepted (Option B).** A
-  friends feed is scoped to your friends, so an anon post appearing there
-  already tells the reader "a friend wrote this" — nulling `user_id` doesn't hide
-  that set-membership signal, and for a 1-friend user it's fully deanonymized.
-  Rejected Option A (keep anon posts out of the friends feed, so they only
-  appear in the large-anonymity-set public pool). Chose B for simplicity,
-  treating the friend circle as a light veil, **paired with a required
-  compose-time warning** so it's intentional, not a surprise.
+Two-way mutual follow, personal (no Redis, client-cached), anonymity stripped
+via the same per-viewer conditional projection as §4a. Anonymity in the
+friends feed is only *soft*, accepted deliberately — a friend circle is small
+enough that "someone in this feed posted anonymously" already narrows the
+field, down to full deanonymization for a 1-friend user — paired with a
+required compose-time warning so that's intentional, not a surprise. Full
+reasoning and the rejected alternative: `memory/friends-feature-decisions.md`.
 
 ---
 
@@ -293,9 +277,16 @@ managed Redis; Postgres read replicas for read-heavy feeds; CDN for images
 
 ## 11. Open items (decide at build time)
 
-- **Sparse-region fallback** (Phase 5): a hard region match can return zero
-  posts. Widen to country, or fall back to "most liked"? Not decided.
 - **"Most popular" scope** (Phase 5): global vs per-region, and whether a
-  recency-decay factor is wanted now. Open.
-- **Photo write-authorization mechanism** (Phase 4.5): the exact policy once the
-  path no longer carries identity (§7).
+  recency-decay factor is wanted now. Still genuinely open.
+
+**Resolved since this list was written:**
+- **Sparse-region fallback** — widen to country, then fall back to "Most
+  liked," no third tier. Resolved 2026-07-30, see
+  `memory/anonymity-and-proximity-decisions.md`'s "Phase 5 kickoff" section.
+- **Photo write-authorization mechanism** — bucket-scoped `insert` policy on
+  `storage.objects` (any authenticated user may upload to the `post-photos`
+  bucket; the random path itself carries no identity once upload
+  authorization stopped being path-scoped). See
+  `supabase/migrations/20260725080735_anon_photo_path_rework.sql` and
+  `docs/database-architecture.md` §5/§6.

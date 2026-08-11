@@ -10,7 +10,6 @@ Everything else:
 
 - `memory/daily-rating-social-app-spec.md` — full product spec
 - `memory/project-phase-status.md` — build log / current phase status (most current source)
-- `memory/MEMORY.md` — memory index
 - `memory/anonymity-and-proximity-decisions.md` — anonymous posting + region-proximity decisions
 - `memory/front-server-caching-decisions.md` — Phase 5.5 front server + Redis / caching + RLS
 - `memory/friends-feature-decisions.md` — Phase 4.7 friends (two-way follow) + soft-anonymity
