@@ -6,6 +6,7 @@ import type { ExploreFeedType, RegionFeedTier } from '@/types/feed';
 import type { Region } from '@/types/region';
 import { FEED_PAGE_SIZE, MOST_LIKED_LIMIT, POST_POLL_INTERVAL_MS } from '@/constants/posts';
 import { useHiddenPostsIds } from './useHiddenPosts';
+import { requireDefined } from '@/utils/requireDefined';
 
 export type ExploreFeedPage = {
   posts: FeedPost[];
@@ -102,9 +103,7 @@ export function useExploreFeed(
     ],
     initialPageParam: { cursor: undefined, tier: null } as PageParam,
     queryFn: async ({ pageParam }): Promise<ExploreFeedPage> => {
-      if (!userId) {
-        throw new Error('User ID is required');
-      }
+      requireDefined(userId, 'User ID is required');
 
       if (feedType === 'mostLiked') return { posts: await fetchMostLiked(), tier: null };
       if (feedType === 'newest') return { posts: await fetchNewest(pageParam.cursor), tier: null };

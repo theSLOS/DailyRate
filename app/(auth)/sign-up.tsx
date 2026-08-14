@@ -1,7 +1,8 @@
 import { useState, JSX } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
+import { View, Text, TextInput, StyleSheet } from 'react-native';
 import { Link } from 'expo-router';
 import { supabase } from '@/lib/supabase';
+import { Button } from '@/components/ui/Button';
 
 export default function SignUpScreen(): JSX.Element {
   const [email, setEmail] = useState('');
@@ -48,9 +49,12 @@ export default function SignUpScreen(): JSX.Element {
         onChangeText={setConfirmPassword}
         secureTextEntry
       />
-      <Pressable style={styles.button} onPress={handleSignUp} disabled={loading}>
-        <Text style={styles.buttonText}>{loading ? 'Signing up...' : 'Sign up'}</Text>
-      </Pressable>
+      <Button
+        label={loading ? 'Signing up...' : 'Sign up'}
+        onPress={handleSignUp}
+        disabled={loading}
+        variant="primary"
+      />
       <Link href="/(auth)/sign-in">
         <Text style={styles.link}>Already have an account? Sign in</Text>
       </Link>
@@ -62,8 +66,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', padding: 24 },
   title: { fontSize: 24, fontWeight: 'bold', marginBottom: 24 },
   input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 12, marginBottom: 12 },
-  button: { backgroundColor: '#000', borderRadius: 8, padding: 14, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: '600' },
   error: { color: 'red', marginBottom: 12 },
   link: { marginTop: 16, textAlign: 'center', color: '#555' },
 });

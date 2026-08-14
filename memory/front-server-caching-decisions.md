@@ -1,48 +1,31 @@
 ---
 name: front-server-caching-decisions
-description: Decisions for the not-yet-built Phase 5.5 front server + Redis caching layer, and the reconciliation of a stale architecture handoff
+description: Decisions for the Phase 5.5 front server + Redis caching layer (Concept 1 server skeleton built; caching/gateway/rate-limit design resolved, not yet built)
 metadata:
   type: project
 ---
 
-A separate session produced `architecture-decisions-handoff.md` (a front server
-+ Redis caching design). Reconciled against the real codebase on 2026-07-25 —
-most of it was written against a generic ephemeral-social-app model and
-contradicted the actual schema. Sound parts folded into `memory/CLAUDE.md`
-(new "Server & caching principles" section + Phase 5.5 row) and
-`docs/database-architecture.md` (§9 "Handoff reconciliation"); the handoff doc
-itself can be retired.
+Reconciled against a stale separate-session handoff doc on 2026-07-25 (sound
+parts folded into this file, `memory/CLAUDE.md`, and
+`docs/database-architecture.md` §9; the handoff doc itself was retired).
 
-**Front server + Redis is Phase 5.5 (after Phase 5), not built yet** — user's
-call. Sequenced after Phase 5 deliberately: it would cache region/most-liked
-feed endpoints that don't exist until Phase 5, and Phase 4.5 anonymity changes
-what a cached row may contain.
+**Front server + Redis is Phase 5.5, sequenced after Phase 5** — it caches
+region/most-liked feed endpoints that don't exist until Phase 5, and Phase 4.5
+anonymity changes what a cached row may contain. Concept 1 (server skeleton +
+JWT-forwarding) is built as of 2026-08-08; the caching/gateway/rate-limit
+decisions below are resolved but not yet built.
 
 **The one hard design decision — shared cache vs per-user RLS — resolved
 2026-07-25.** A truly shared `feed:{region}` blob must be *identical for every
-viewer* to stay cacheable, so the three per-viewer transforms are split by where
-they can safely run (a `security definer` RPC produces the superset; never
-`service_role` for user-facing requests; auth stays Supabase's, JWT forwarded
-unmodified, RLS the real boundary; server stays **stateless**):
-- **Anonymity → in the RPC, before the row leaves Postgres.** Nulls
-  `user_id`/author/`photo_url` for `is_anonymous` posts *unconditionally* (a
-  shared blob can't branch on `auth.uid()`), so an anonymous author's identity
-  never reaches Redis, the server, or the client. The base `posts` row keeps
-  `user_id` — moderation reads it with elevated privilege. Personal per-viewer
-  queries (friends, detail) strip *conditionally*
-  (`is_anonymous and user_id <> auth.uid()`) so the author still sees their own.
-- **Self-exclusion → client-side** (cosmetic): client drops
-  `post.user_id === myId`.
-- **Block-filter → client-side, accepted with a residual:** client drops
-  `myBlockedIds.has(post.user_id)`. Safe *because* feed posts are already public
-  AND blocking stays RLS-enforced on every path that matters (detail, comments,
-  likes, Storage photos). Residual: a blocker inspecting the raw feed payload
-  can see a blocked user's already-public, non-anonymous post text. Low harm,
-  deliberate.
-- Net: both client filters are no-ops on anonymous posts (`user_id` null), and
-  the **front server does zero per-viewer work on feeds** — a dumb Redis proxy
-  handing one identical blob to everyone. (This supersedes the earlier sketch
-  of server-side per-request personalization.)
+viewer* to stay cacheable. Anonymity strips happen in a `security definer` RPC
+before the row leaves Postgres (the only place safe from `auth.uid()`);
+self-exclusion and the block-filter both happen client-side, safe because feed
+posts are already public and blocking stays RLS-enforced everywhere it
+actually matters (detail, comments, likes, Storage photos). Net effect: the
+front server does zero per-viewer work on feeds — a dumb Redis proxy handing
+one identical blob to everyone. Full reasoning, rejected alternatives, and the
+accepted block-filter residual: see `docs/feed-and-caching-architecture.md`
+§3-4.
 
 **Handoff claims that were factually wrong about this codebase (don't
 re-derive):** no `ratings` table (it's `posts`); no `expires_at` column and
@@ -82,11 +65,11 @@ Full concept sequence for Phase 5.5 lives in the approved plan
 (`C:\Users\user\.claude\plans\yep-we-can-keep-composed-eich.md`) — 11
 concepts, DB/API-verify before app-wiring at each step, full gateway scope.
 
-**How to apply:** when Phase 5.5 starts, build the shared-cache RPC per the
-resolution above and fold the finalized caching rules from `memory/CLAUDE.md`
-into `docs/database-architecture.md` as the settled reference. Handoff Open Q#3
-("most popular" scope global-vs-region + decay) stays genuinely open until
-Phase 5.
+**How to apply:** build the shared-cache RPC per the resolution above and fold
+the finalized caching rules from `memory/CLAUDE.md` into
+`docs/database-architecture.md` as the settled reference once built. Handoff
+Open Q#3 ("most popular" scope global-vs-region + decay) is still genuinely
+open — see `docs/feed-and-caching-architecture.md` §11.
 
 **Gateway scope, resolved 2026-08-08 (not built yet — decision only), supersedes
 the earlier "most writes bypass the server" framing:** the front server becomes

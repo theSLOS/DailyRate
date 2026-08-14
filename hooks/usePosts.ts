@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import type { UseQueryResult, UseMutationResult } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
 import type { Post } from '@/types/posts';
+import { requireDefined } from '@/utils/requireDefined';
 type UpsertPostInput = {
   userId: string;
   rating: number;
@@ -26,14 +27,12 @@ export function useTodayPost(
       if (!entryDate) {
         return null;
       }
-      if (!userId) {
-        throw new Error('User ID is required');
-      }
+      const id = requireDefined(userId, 'User ID is required');
       const { data, error } = await supabase
         .from('posts')
         .select('*')
         .eq('local_date', entryDate)
-        .eq('user_id', userId)
+        .eq('user_id', id)
         .maybeSingle();
 
       if (error) {
@@ -50,10 +49,7 @@ export function useUpsertPost(): UseMutationResult<Post, PostgrestError, UpsertP
 
   return useMutation({
     mutationFn: async (input: UpsertPostInput): Promise<Post> => {
-      const entryDate = getEntryDate(new Date());
-      if (!entryDate) {
-        throw new Error('Invalid date');
-      }
+      const entryDate = requireDefined(getEntryDate(new Date()), 'Invalid date');
 
       const { data, error } = await supabase
         .from('posts')

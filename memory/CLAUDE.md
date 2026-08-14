@@ -7,11 +7,12 @@ This project uses a **guide + review** workflow:
 1. **Claude explains** the next step: what to build, why it's structured that way, and any decisions to make before writing code — paired with pseudo code sketching the shape of the function/component/query (not full working code; you still write the real implementation).
 2. **You write the code.** Claude won't write it for you unless you're stuck and explicitly ask.
 3. **You show Claude the result.** Paste the file or relevant section and ask for a review.
-4. **Claude reviews** for correctness, structure, and standards (see below). Flags issues and names the underlying principle behind each one, not just the patch — e.g. not just "move this into a hook" but *why* (separation of concerns, reusability, testability).
+4. **Claude reviews** for correctness, structure, and standards (see below). Flags issues and names the underlying principle behind each one, not just the patch — e.g. not just "move this into a hook" but _why_ (separation of concerns, reusability, testability).
 
 When you're ready for the next step, say "next" or "what's next". Claude will explain the upcoming task at the right level of detail — not too high-level, not step-by-step hand-holding.
 
 A few standing rules within this workflow:
+
 - If there are multiple reasonable designs (e.g. client-side vs. DB-side proximity filtering), briefly present the trade-offs before picking one.
 - Ask before introducing a new library or dependency — explain why it's needed first.
 - Flag it explicitly when you're about to: tightly couple a UI component to Supabase/network calls directly, skip error or loading states on an async call, put business logic in a component instead of a hook, write a PostGIS/geo query that will scale badly, or miss RLS implications on a new table.
@@ -31,40 +32,41 @@ Tech stack: Expo (React Native + Web) · TypeScript · Supabase (Postgres + Post
 
 Within whatever phase is current, tackle **one concept at a time**, not just one layer at a time — "backend," for instance, isn't one concept, it's schema design, RLS, data integrity, and geospatial queries bundled together. Mixing them makes it hard to tell what broke when something does.
 
-Implement one concept, verify it in isolation directly against the DB/API (not through the app), *then* stack the next concept on top. Don't wire multiple new concepts together in one sitting just because it's convenient.
+Implement one concept, verify it in isolation directly against the DB/API (not through the app), _then_ stack the next concept on top. Don't wire multiple new concepts together in one sitting just because it's convenient.
 
 ---
 
 ## Phase tracking
 
-| Phase | Name | Status |
-|---|---|---|
-| 0 | Foundations & setup | complete |
-| 1 | Core posting loop | complete |
-| 2 | Personal history | complete |
-| 3 | Explore feed + 36h rule | complete |
-| 4 | Engagement + blocking/reporting | complete |
-| 4.5 | Anonymous posting | complete |
-| 4.7 | Friends (two-way mutual follow) — relationships only | complete |
-| 4.8 | Friends feed + Friends tab | complete |
-| 5 | Filtering & proximity (region-based, not distance-radius — see memory) | complete |
-| 5.5 | Front server + Redis caching layer | not started |
-| 6 | Notifications | not started |
-| 7 | Trust, safety & privacy | not started |
-| 8 | Polish & performance | not started |
-| 9 | Beta | not started |
-| 10 | Launch | not started |
+| Phase | Name                                                                   | Status                                                               |
+| ----- | ---------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 0     | Foundations & setup                                                    | complete                                                             |
+| 1     | Core posting loop                                                      | complete                                                             |
+| 2     | Personal history                                                       | complete                                                             |
+| 3     | Explore feed + 36h rule                                                | complete                                                             |
+| 4     | Engagement + blocking/reporting                                        | complete                                                             |
+| 4.5   | Anonymous posting                                                      | complete                                                             |
+| 4.7   | Friends (two-way mutual follow) — relationships only                   | complete                                                             |
+| 4.8   | Friends feed + Friends tab                                             | complete                                                             |
+| 5     | Filtering & proximity (region-based, not distance-radius — see memory) | complete                                                             |
+| 5.5   | Front server + Redis caching layer                                     | in progress (Concept 1: server skeleton + JWT-forwarding — complete) |
+| 6     | Notifications                                                          | not started                                                          |
+| 7     | Trust, safety & privacy                                                | not started                                                          |
+| 8     | Polish & performance                                                   | not started                                                          |
+| 9     | Beta                                                                   | not started                                                          |
+| 10    | Launch                                                                 | not started                                                          |
 
 Update the status column as phases complete.
 
 ---
 
-## Server & caching principles (Phase 5.5 — not built yet)
+## Server & caching principles (Phase 5.5 in progress)
 
-A future front server (Node/Express) will sit between the client and Supabase.
-It is **not being built now** — these are standing decisions so the design
-doesn't drift when the phase starts. Auth and RLS stay entirely Supabase's job;
-the server forwards the user's JWT unmodified
+A front server (Node/Express) sits between the client and Supabase. Concept 1
+(server skeleton + JWT-forwarding) is built; the rest below are standing
+decisions for the concepts still to come, so the design doesn't drift
+mid-phase. Auth and RLS stay entirely Supabase's job; the server forwards the
+user's JWT unmodified
 (`createClient(..., { global: { headers: { Authorization: jwt } } })`) and
 never uses `service_role` for user-facing requests.
 
@@ -84,26 +86,15 @@ never uses `service_role` for user-facing requests.
   thread); rely on the client-side TanStack Query cache when the result is
   personal (own history, friends feed, own today's post).
 - **Shared-feed personalization split (resolved 2026-07-25):** a shared feed
-  blob must be *identical for every viewer* to stay cacheable, so the three
-  per-viewer transforms are split by where they're safe to run:
-  - **Anonymity → in the `security definer` RPC, before the row leaves Postgres.**
-    The RPC nulls `user_id`/author/`photo_url` for `is_anonymous` posts
-    *unconditionally* (a shared blob can't use `auth.uid()`), so an anonymous
-    author's identity never reaches Redis, the server, or the client. The base
-    `posts` row always keeps `user_id` — moderation reads it with elevated
-    privilege. Personal per-viewer queries (friends, detail) strip conditionally
-    (`is_anonymous and user_id <> auth.uid()`) so the author still sees their own.
-  - **Self-exclusion → client-side** (cosmetic, non-security): the client drops
-    `post.user_id === myId`.
-  - **Block-filter → client-side** (accepted with residual): the client drops
-    `myBlockedIds.has(post.user_id)`. Accepted *because* feed posts are already
-    public AND blocking stays server-enforced by RLS on every path that matters
-    (post detail, comments, likes, Storage photos). Residual: a blocker who
-    inspects the raw feed payload can see a blocked user's already-public,
-    non-anonymous post text. Low harm; deliberate trade-off, not an oversight.
-  - Net effect: both client filters are no-ops on anonymous posts (their
-    `user_id` is null), and the **front server does zero per-viewer work on
-    feeds** — it's a dumb Redis proxy handing one identical blob to everyone.
+  blob must be _identical for every viewer_ to stay cacheable. Anonymity
+  strips happen server-side, in the `security definer` RPC, before the row
+  leaves Postgres — the only place safe from `auth.uid()`. Self-exclusion and
+  the block-filter both happen client-side (cheap; blocking is still
+  server-enforced by RLS everywhere it actually matters — post detail,
+  comments, likes, Storage photos). Net effect: the front server does zero
+  per-viewer work on feeds, it's a dumb Redis proxy handing one identical
+  blob to everyone. Full reasoning, the rejected alternatives, and the
+  accepted block-filter residual: see `[[front-server-caching-decisions]]`.
 - **Feed personalization ceiling (resolved 2026-08-10):** shared feeds
   (Explore / region / most-liked) stay non-personalized **permanently** — the
   identical-blob rule above is a standing guarantee, not a convenience. The
@@ -144,12 +135,14 @@ reintroduce a requests-per-minute limiter without a concrete need.
 These apply to every file. Claude will flag violations in reviews.
 
 ### TypeScript
+
 - Strict mode on (`"strict": true` in tsconfig). No `any`. If you're tempted to write `any`, use `unknown` and narrow it.
 - Explicit return types on all functions (except trivial one-liners where inference is obvious).
 - Prefer `type` over `interface` unless you need declaration merging.
 - No non-null assertions (`!`) unless you can add a comment explaining why it's provably safe.
 
 ### File & folder structure
+
 ```
 app/                   # Expo Router screens (file = route)
   (auth)/              # Auth group
@@ -166,6 +159,7 @@ utils/                 # Pure functions with no side effects
 ```
 
 ### Components
+
 - One component per file; file name matches the component name.
 - Named exports only — no default exports for components.
 - No inline styles. Use NativeWind classes. If a style can't be expressed in NativeWind, use a `StyleSheet.create` at the bottom of the file.
@@ -173,18 +167,21 @@ utils/                 # Pure functions with no side effects
 - Props types defined inline above the component, not imported from elsewhere unless shared.
 
 ### Data fetching
+
 - All Supabase queries live in custom hooks using TanStack Query (`useQuery` / `useMutation`).
 - Always handle the error case. Never silently ignore a rejected query.
 - Use optimistic updates for likes and comment submission (the spec calls this out).
 - Query keys follow the pattern: `['entity', { filters }]` e.g. `['posts', { feedType: 'proximity' }]`.
 
 ### Supabase
+
 - Single client instance exported from `lib/supabase.ts`.
 - Never construct raw SQL strings in the client. Use the Supabase JS query builder.
 - Type the Supabase client with the generated database types (`supabase gen types typescript`).
 - Check `error` on every query response before using `data`.
 
 ### Naming
+
 - Components: `PascalCase`
 - Hooks: `useCamelCase`
 - Utils/helpers: `camelCase`
@@ -193,11 +190,13 @@ utils/                 # Pure functions with no side effects
 - Database column names stay `snake_case` (Postgres convention); map to `camelCase` at the hook boundary if needed.
 
 ### Comments
+
 - Default: no comments. Well-named identifiers should be self-explanatory.
-- Write a comment only when the *why* is non-obvious: a hidden constraint, a workaround, a subtle invariant.
-- Never comment *what* the code does.
+- Write a comment only when the _why_ is non-obvious: a hidden constraint, a workaround, a subtle invariant.
+- Never comment _what_ the code does.
 
 ### Git commits
+
 - Commit at the end of each logical unit of work (not per file, not per phase).
 - Message format: `type: short description` where type is `feat`, `fix`, `refactor`, `chore`, `docs`.
 - Example: `feat: add one-per-day uniqueness constraint to posts table`
@@ -206,14 +205,14 @@ utils/                 # Pure functions with no side effects
 
 ## Tooling (set up in Phase 0)
 
-| Tool | Purpose |
-|---|---|
-| ESLint + `@typescript-eslint` + `eslint-plugin-react` + `eslint-plugin-react-native` | Catch style and correctness issues |
-| Prettier | Consistent formatting |
-| VS Code: format on save | Instant feedback while writing |
-| Husky + lint-staged | Pre-commit gate: lint + type-check before any commit lands |
-| Jest + `jest-expo` (added Phase 5.5) | App-side automated tests, `__tests__/` at root — `npm test`. `jest-expo`'s version must track the installed `expo` SDK version (`~54` here), not `latest` — a version mismatch fails to install at all (`ERESOLVE`). |
-| Vitest + `supertest` (added Phase 5.5) | Server-side automated tests, `server/tests/` — `npm test` from `server/`. Integration-style against real Supabase (dummy test accounts), not mocked — matches this project's standing DB-verification philosophy. Credentials in gitignored `server/.env.test.local` (see `server/.env.test.example`). |
+| Tool                                                                                 | Purpose                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ESLint + `@typescript-eslint` + `eslint-plugin-react` + `eslint-plugin-react-native` | Catch style and correctness issues                                                                                                                                                                                                                                                                     |
+| Prettier                                                                             | Consistent formatting                                                                                                                                                                                                                                                                                  |
+| VS Code: format on save                                                              | Instant feedback while writing                                                                                                                                                                                                                                                                         |
+| Husky + lint-staged                                                                  | Pre-commit gate: lint + type-check before any commit lands                                                                                                                                                                                                                                             |
+| Jest + `jest-expo` (added Phase 5.5)                                                 | App-side automated tests, `__tests__/` at root — `npm test`. `jest-expo`'s version must track the installed `expo` SDK version (`~54` here), not `latest` — a version mismatch fails to install at all (`ERESOLVE`).                                                                                   |
+| Vitest + `supertest` (added Phase 5.5)                                               | Server-side automated tests, `server/tests/` — `npm test` from `server/`. Integration-style against real Supabase (dummy test accounts), not mocked — matches this project's standing DB-verification philosophy. Credentials in gitignored `server/.env.test.local` (see `server/.env.test.example`). |
 
 ---
 

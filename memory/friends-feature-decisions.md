@@ -5,14 +5,16 @@ metadata:
   type: project
 ---
 
-Friends is now committed scope (Phase 4.7, proposed slot between 4.5 anonymous
+Friends is now committed scope (Phase 4.7, slotted between 4.5 anonymous
 posting and 5 proximity — user promoted it from a spec §6 stretch idea on
-2026-07-25; move the slot if sequencing changes). Not started.
+2026-07-25). **Built**: Phase 4.7 schema/RLS complete 2026-07-28 (verified
+27/27 cases, see `memory/project-phase-status.md`); Phase 4.8 friends feed +
+tab complete 2026-08-03.
 
 **Two-way (mutual) follow, not one-way.** A friendship exists only once both
-users accept — like Facebook friends, not Twitter follows. Implies a
-`friendships` table with a request/accept state (e.g. `status` pending→accepted)
-or a pair of rows, plus RLS. Exact shape TBD at build time.
+users accept — like Facebook friends, not Twitter follows. Built as two
+tables (`friend_requests` + mirrored-row `friendships`) plus two `security
+definer` RPCs — exact shape in the "Concept 1 design" section below.
 
 **Friends feed is personal → no Redis.** It depends on the viewer's own friend
 list (`where user_id in (<my friends>) and live`), so it's per-user and never
@@ -48,15 +50,14 @@ decisions rather than defaulting to one-way follow or hard anonymity. See
 server-side enforced) and [[front-server-caching-decisions]] (the shared-vs-
 personal feed split and where anonymity stripping runs per read path).
 
-**How to apply:** when 4.7 starts, build the `friendships` table (mutual
-accept) + RLS, a `useFriendsFeed` hook (personal, no Redis, anon stripped via
-the per-viewer `case when is_anonymous and user_id <> auth.uid()` projection),
-and the compose-time anonymity warning. Confirm the phase slot with the user
-before starting.
+**Built as designed:** the `friendships` table (mutual accept) + RLS, the
+`useFriendsFeed` hook (personal, no Redis, anon stripped via the per-viewer
+`case when is_anonymous and user_id <> auth.uid()` projection), and the
+compose-time anonymity warning are all in place.
 
 ---
 
-## Concept 1 design, finalized 2026-07-28 (not yet built — schema/RLS only, ready to implement)
+## Concept 1 design, finalized 2026-07-28 — built as designed
 
 Two tables, not one — pending requests and confirmed friendships are kept
 separate rather than a single table with a status column:
@@ -103,6 +104,6 @@ reasoning above (industry-standard trade-off for undirected/mutual graphs:
 pay 2x storage + one atomic write on the rare accept event, get every future
 read down to a trivial indexed lookup).
 
-**How to apply:** next step is writing the actual migration file (table
-DDL + RLS policies + the two RPC functions) following this exact shape — no
-further design decisions needed, this is ready to implement directly.
+**Built exactly to this shape** — see
+`supabase/migrations/20260728093817_friends.sql` and
+`docs/database-architecture.md` §2/§4 for the as-built reference.

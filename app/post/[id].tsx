@@ -3,15 +3,8 @@ import { usePost } from '@/hooks/usePost';
 import { JSX, useState } from 'react';
 import { useSignedPhotoUrl } from '@/hooks/useSignedPhotoUrl';
 import { Centered } from '@/components/Centered';
-import {
-  ActivityIndicator,
-  ScrollView,
-  Text,
-  Image,
-  RefreshControl,
-  View,
-  Pressable,
-} from 'react-native';
+import { ActivityIndicator, ScrollView, Text, Image, RefreshControl, View } from 'react-native';
+import { Button } from '@/components/ui/Button';
 import { formatCoarseAge } from '@/utils/formatCoarseAge';
 import { ANONYMOUS_AUTHOR_LABEL } from '@/constants/posts';
 import { useAuth } from '@/hooks/useAuth';
@@ -90,14 +83,13 @@ export default function PostDetailScreen(): JSX.Element {
             {session?.user.id !== post.user_id && (
               <>
                 <ReportButton reporterId={session?.user.id} targetType="post" targetId={post.id} />
-                <Pressable
+                <Button
+                  label="Hide this post"
                   onPress={() => {
                     hidePost.mutate(post.id);
                     router.back();
                   }}
-                >
-                  <Text>Hide this post</Text>
-                </Pressable>
+                />
               </>
             )}
             {post.user_id !== null && session?.user.id !== post.user_id && (

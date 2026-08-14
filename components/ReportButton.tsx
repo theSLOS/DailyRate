@@ -1,6 +1,7 @@
 import { useSubmitReport, ReportTargetType } from '@/hooks/useReports';
 import { JSX, useState } from 'react';
-import { Pressable, View, Text, TextInput } from 'react-native';
+import { View, Text, TextInput } from 'react-native';
+import { Button } from '@/components/ui/Button';
 
 export type ReportButtonProps = {
   reporterId: string | undefined;
@@ -30,26 +31,23 @@ export function ReportButton({ reporterId, targetType, targetId }: ReportButtonP
   };
 
   if (!isReporting) {
-    return (
-      <Pressable onPress={() => setIsReporting(true)} disabled={!reporterId}>
-        <Text>Report</Text>
-      </Pressable>
-    );
+    return <Button label="Report" onPress={() => setIsReporting(true)} disabled={!reporterId} />;
   }
 
   return (
     <View>
       <TextInput value={reason} onChangeText={setReason} placeholder="Reason for reporting" />
       {submitReport.isError && <Text>Couldn't submit report. Try again.</Text>}
-      <Pressable
+      <Button
+        label={submitReport.isPending ? 'Submitting…' : 'Submit report'}
         onPress={handleSubmit}
         disabled={reason.trim() === '' || submitReport.isPending}
-      >
-        <Text>{submitReport.isPending ? 'Submitting…' : 'Submit report'}</Text>
-      </Pressable>
-      <Pressable onPress={() => setIsReporting(false)} disabled={submitReport.isPending}>
-        <Text>Cancel</Text>
-      </Pressable>
+      />
+      <Button
+        label="Cancel"
+        onPress={() => setIsReporting(false)}
+        disabled={submitReport.isPending}
+      />
     </View>
   );
 }

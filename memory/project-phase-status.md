@@ -1297,27 +1297,36 @@ to pin "now", since the function reads the real clock internally).
   `['likes', ...]` and `['posts', {id}]` cache entries flip *before* a
   manually-held-open mock promise resolves, then asserts a rejected mutation
   rolls both back to their pre-mutation values.
-- **Never confirmed passing.** The test run hung indefinitely (background
-  task never produced output, even after several minutes) and was stopped
-  without a clear diagnosis. One real contributing factor was found and fixed
-  along the way — piping the run through `| tail -80` meant nothing could
-  print until the whole process exited, which made an already-slow or
-  genuinely-hung run look like *zero* output from the start; removing the
-  pipe was the right fix for *that* problem specifically, but a second
-  background run still didn't produce output before being stopped, so
-  whether the actual test logic hangs (e.g. a promise in the optimistic-
-  update test that never resolves, or `waitFor` polling against a `QueryClient`
-  that never settles) is still unknown. **Do not assume `useLikes.test.ts`
-  passes — it has never actually run to completion.**
+- **Resolved in a later session (2026-08-11).** `useLikes.test.ts` now
+  passes reliably — 21/21 across the whole suite, confirmed over 3 repeated
+  clean runs. It was never a hang, but three real, unrelated bugs found by
+  reading the installed `@testing-library/react-native` source directly
+  rather than continuing to guess from symptoms: (1) `__tests__/testUtils/
+  supabaseMock.ts` and `renderHookWithQueryClient.tsx` were being picked up
+  as test suites themselves by jest-expo's default `testMatch` (they live
+  under `__tests__/`) — excluded via `testPathIgnorePatterns`. (2) The
+  installed version (`^14.0.1`) made `renderHook` **async**, but
+  `renderHookWithQueryClient` called it without `await` — spreading a
+  `Promise` onto the return object silently produced `result: undefined` at
+  every call site. (3) `act(() => result.current.mutate(...))` was never
+  awaited; this version's `act()` always wraps its callback async and
+  restores `IS_REACT_ACT_ENVIRONMENT` only once the returned promise
+  resolves, so skipping `await` let that restoration land on a later
+  microtask that could race the *next* test's own render/effect-flush,
+  leaving its `result.current` null. All three fixed; `npm test` from the
+  repo root is trustworthy again.
 
-**How to apply:** next session should re-run `npx jest useLikes --verbose`
-(no pipe) directly and actually watch it to completion before touching
-anything else in this file — diagnose for real rather than re-guessing.
-Prime suspects, cheapest to check first: (1) the manually-held-open
-`pendingInsert` promise in the optimistic-update test — if `resolveInsert`
-never actually fires (e.g. a timing bug in the test itself, not the hook),
-`waitFor(() => expect(result.current.isSuccess)...)` at the end would poll
-forever; (2) `act()` from `@testing-library/react-native` wrapping an async
-`mutate()` call incorrectly. The remaining 15 hooks and the 3 non-pure utils
-(`getSignedPhotoUrl`, `uploadPhoto`, `pickAndCompressImage`) are untouched —
-deliberately deferred, not forgotten.
+The remaining 15 hooks and the 3 non-pure utils (`getSignedPhotoUrl`,
+`uploadPhoto`, `pickAndCompressImage`) are still untouched — deliberately
+deferred, not forgotten.
+
+**Known gap, not a bug: the broader dummy test-account set isn't
+recoverable from the repo.** Beyond the 2 accounts in
+`server/.env.test.local` (the Vitest suite above), most of the manual/
+scripted REST verification throughout this file used up to 8 dummy Supabase
+accounts (`dummy1probe`–`dummy8`). Their credentials only ever lived in the
+originating session's ephemeral scratchpad (`scratchpad/dummy-accounts.env`)
+— correct secret hygiene (never committed), but scratchpad doesn't persist
+across sessions or machines. Re-running any of the REST-level verification
+scripts referenced throughout this file requires the user to supply these
+credentials fresh; they cannot be recovered from git history or this file.

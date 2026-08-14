@@ -7,6 +7,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { requireDefined } from '@/utils/requireDefined';
 
 export function useBlockStatus(
   blockedUserId: string | undefined
@@ -14,13 +15,11 @@ export function useBlockStatus(
   return useQuery({
     queryKey: ['blocks', { blockedUserId }],
     queryFn: async (): Promise<boolean> => {
-      if (!blockedUserId) {
-        throw new Error('Blocked User ID needed');
-      }
+      const id = requireDefined(blockedUserId, 'Blocked User ID needed');
       const { data, error } = await supabase
         .from('blocks')
         .select('*')
-        .eq('blocked_id', blockedUserId)
+        .eq('blocked_id', id)
         .maybeSingle();
       if (error) {
         throw error;

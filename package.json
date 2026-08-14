@@ -71,7 +71,8 @@
     "preset": "jest-expo",
     "testPathIgnorePatterns": [
       "/node_modules/",
-      "/server/"
+      "/server/",
+      "/__tests__/testUtils/"
     ]
   }
 }

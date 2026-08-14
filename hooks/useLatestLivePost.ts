@@ -3,6 +3,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useQuery } from '@tanstack/react-query';
+import { requireDefined } from '@/utils/requireDefined';
 
 export function useLatestLivePost(
   userId: string | undefined
@@ -10,13 +11,11 @@ export function useLatestLivePost(
   return useQuery({
     queryKey: ['posts', { latestByUser: userId }],
     queryFn: async (): Promise<FeedPost | null> => {
-      if (!userId) {
-        throw new Error('User ID is required');
-      }
+      const id = requireDefined(userId, 'User ID is required');
       const { data, error } = await supabase
         .from('posts_feed')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', id)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();

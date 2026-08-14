@@ -57,6 +57,12 @@ The feed offers two modes over the same 36-hour candidate set:
 - **Most liked (today):** entries ordered by like count, highest first, over the active window.
 - **Sensible default:** "Most liked" for users who deny location; "Proximity" once location is granted. Always provide a manual toggle.
 
+> **Built as (Phase 5, region-matching not distance-radius):** "Proximity" was
+> redefined to same-state/same-country matching against bundled boundary
+> polygons, with a sparse-region fallback (state → country → Most liked, no
+> radius, no live GPS query). See
+> `memory/anonymity-and-proximity-decisions.md`.
+
 ### 1.6 Engagement
 - **Likes:** one like per user per post; toggle on/off; like count shown. (Optionally likes on comments — treat as a stretch feature.)
 - **Comments:** users comment on a day.
@@ -205,6 +211,14 @@ This is the single strongest reason to choose Postgres/PostGIS over Firestore �
 
 > **Proximity pagination note:** `dist` is relative to the user's location at query time. If the user moves while scrolling, page 2's distances will be inconsistent with page 1's. Fix: snapshot the user's location once at the start of a scroll session and pass it as a constant parameter for all subsequent pages. Do not re-read device location mid-scroll.
 
+> **Built as (Phase 5): this `ST_DWithin` radius design was not built.**
+> Region-matching (same state/country via bundled Natural Earth boundary
+> polygons + `ST_Contains`, resolved server-side once per post through a
+> `resolve_region()` RPC) replaced it — no live distance query, no raw
+> coordinates ever persisted on `posts` at all. See
+> `memory/anonymity-and-proximity-decisions.md` and
+> `docs/database-architecture.md` §2.
+
 **Most-liked today:** order the windowed set by `like_count desc`. Keeping `like_count` denormalized on the post (updated by a trigger on `likes` insert/delete) avoids a `COUNT(*)` per row on every feed load.
 
 **Counters:** database triggers keep `like_count` and `comment_count` in sync atomically — no client-side counting, no drift.
@@ -313,6 +327,13 @@ Phased and MVP-first. Each phase ends with something you can actually use, so yo
 - Reverse-geocode to neighbourhood labels.
 - **Done when:** the feed can be sorted by nearest and by most-liked, and no exact coordinates are ever exposed.
 
+> **Built as: region-matching, not `ST_DWithin`/coarsened coordinates.** No
+> coordinates are stored on `posts` at all — a `resolve_region()` RPC derives
+> `{country_code, state_code, place_label}` once per post against bundled
+> boundary polygons, and the feed toggle matches same-state/same-country with
+> a Most-liked fallback for sparse regions. See
+> `memory/anonymity-and-proximity-decisions.md`. Complete as of 2026-07-30.
+
 ### Phase 6 — Notifications
 - Store Expo push tokens; Edge Functions to send on like/comment/reply.
 - Configurable daily "rate your day" reminder.
@@ -356,7 +377,9 @@ Phased and MVP-first. Each phase ends with something you can actually use, so yo
 - Likes on comments.
 - Streaks and gentle gamification.
 - Richer history analytics (best/worst days, weekday patterns, monthly recap).
-- Friends/follows layer (a more curated feed alongside Explore).
+- ~~Friends/follows layer (a more curated feed alongside Explore).~~ **Built**
+  (Phase 4.7 relationships + Phase 4.8 feed, complete 2026-08-03) — see
+  `memory/friends-feature-decisions.md`.
 - Themed prompts or community days.
 - Web share cards for a day (without compromising location privacy).
 

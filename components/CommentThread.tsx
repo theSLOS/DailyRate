@@ -1,9 +1,10 @@
 import { useComments, useSubmitComment, CommentWithAuthor } from '@/hooks/useComments';
 import { JSX, useState } from 'react';
-import { Pressable, View, Text, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, ActivityIndicator, TextInput } from 'react-native';
 import { Link } from 'expo-router';
 import { ANONYMOUS_AUTHOR_LABEL } from '@/constants/posts';
 import { ReportButton } from '@/components/ReportButton';
+import { Button } from '@/components/ui/Button';
 
 export type CommentThreadProps = {
   postId: string;
@@ -48,7 +49,8 @@ export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Eleme
             </Text>
           </Link>
           <Text>{comment.body}</Text>
-          <Pressable
+          <Button
+            label="Reply"
             onPress={() =>
               setReplyingTo({
                 id: resolveReplyTarget(comment),
@@ -56,9 +58,7 @@ export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Eleme
                   comment.author.display_name ?? comment.author.username ?? ANONYMOUS_AUTHOR_LABEL,
               })
             }
-          >
-            <Text>Reply</Text>
-          </Pressable>
+          />
           {comment.user_id !== userId && (
             <ReportButton reporterId={userId} targetType="comment" targetId={comment.id} />
           )}
@@ -71,7 +71,8 @@ export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Eleme
                 </Text>
               </Link>
               <Text>{reply.body}</Text>
-              <Pressable
+              <Button
+                label="Reply"
                 onPress={() =>
                   setReplyingTo({
                     id: resolveReplyTarget(reply),
@@ -79,9 +80,7 @@ export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Eleme
                       reply.author.display_name ?? reply.author.username ?? ANONYMOUS_AUTHOR_LABEL,
                   })
                 }
-              >
-                <Text>Reply</Text>
-              </Pressable>
+              />
               {reply.user_id !== userId && (
                 <ReportButton reporterId={userId} targetType="comment" targetId={reply.id} />
               )}
@@ -92,15 +91,11 @@ export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Eleme
       {replyingTo && (
         <View>
           <Text>Replying to {replyingTo.authorLabel}</Text>
-          <Pressable onPress={() => setReplyingTo(null)}>
-            <Text>Cancel</Text>
-          </Pressable>
+          <Button label="Cancel" onPress={() => setReplyingTo(null)} />
         </View>
       )}
       <TextInput value={body} onChangeText={setBody} placeholder="Add a comment" />
-      <Pressable onPress={handleSubmit} disabled={!userId || body.trim() === ''}>
-        <Text>Post</Text>
-      </Pressable>
+      <Button label="Post" onPress={handleSubmit} disabled={!userId || body.trim() === ''} />
     </View>
   );
 }

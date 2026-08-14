@@ -36,7 +36,7 @@ describe('useLikeStatus', () => {
   it('resolves true when a like row exists', async () => {
     mockFrom.mockReturnValue(makeQueryChainMock({ data: { id: 'like-1' }, error: null }));
 
-    const { result } = renderHookWithQueryClient(() => useLikeStatus('post-1', 'user-1'));
+    const { result } = await renderHookWithQueryClient(() => useLikeStatus('post-1', 'user-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBe(true);
@@ -45,7 +45,7 @@ describe('useLikeStatus', () => {
   it('resolves false when no like row exists', async () => {
     mockFrom.mockReturnValue(makeQueryChainMock({ data: null, error: null }));
 
-    const { result } = renderHookWithQueryClient(() => useLikeStatus('post-1', 'user-1'));
+    const { result } = await renderHookWithQueryClient(() => useLikeStatus('post-1', 'user-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBe(false);
@@ -67,18 +67,24 @@ describe('useToggleLike', () => {
     });
     mockFrom.mockReturnValue({ insert: jest.fn(() => pendingInsert) });
 
-    const { result, queryClient } = renderHookWithQueryClient(() => useToggleLike());
+    const { result, queryClient } = await renderHookWithQueryClient(() => useToggleLike());
     queryClient.setQueryData(likeKey, false);
     queryClient.setQueryData(postKey, makeFeedPost({ like_count: 3 }));
 
-    act(() => {
+    // RTL's act() always wraps the callback async now, so an unawaited call
+    // resolves on a later microtask — it can bleed into the next test's act
+    // scope (React warns "You called act(async () => ...) without await")
+    // and race that test's own effect flush. Always await it.
+    await act(() => {
       result.current.mutate({ postId: 'post-1', userId: 'user-1', liked: false });
     });
 
     await waitFor(() => expect(queryClient.getQueryData(likeKey)).toBe(true));
     expect((queryClient.getQueryData(postKey) as FeedPost).like_count).toBe(4);
 
-    resolveInsert({ data: null, error: null });
+    await act(async () => {
+      resolveInsert({ data: null, error: null });
+    });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
   });
 
@@ -87,11 +93,11 @@ describe('useToggleLike', () => {
       insert: jest.fn(() => Promise.resolve({ data: null, error: { message: 'insert failed' } })),
     });
 
-    const { result, queryClient } = renderHookWithQueryClient(() => useToggleLike());
+    const { result, queryClient } = await renderHookWithQueryClient(() => useToggleLike());
     queryClient.setQueryData(likeKey, false);
     queryClient.setQueryData(postKey, makeFeedPost({ like_count: 3 }));
 
-    act(() => {
+    await act(() => {
       result.current.mutate({ postId: 'post-1', userId: 'user-1', liked: false });
     });
 
