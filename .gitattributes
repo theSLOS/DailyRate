@@ -1,0 +1,17 @@
+# Normalise line endings so a machine with core.autocrlf=false can't commit
+# CRLF back and produce whole-file diffs. LF matches Prettier's default.
+* text=auto eol=lf
+
+# Binary assets must never be normalised
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.jks binary
+*.p8 binary
+*.p12 binary
