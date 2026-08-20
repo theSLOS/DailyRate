@@ -4,6 +4,7 @@ import {
   DEFAULT_PAGE_SIZE,
   FEED_VARIANTS,
   MAX_PAGE_SIZE,
+  REGION_REGEX,
   REGION_VARIANTS,
 } from '../constants/feed.js';
 import type { FeedVariant, ParsedFeedQuery } from '../types/feed.js';
@@ -52,6 +53,9 @@ function parseRegionCode(query: Query, variant: FeedVariant): string | null {
 
   if (raw === null || raw.trim() === '') {
     throw invalid('region is required for the state and country feeds');
+  }
+  if (!REGION_REGEX.test(raw)) {
+    throw invalid('region must be 1-16 characters of A-Z, a-z, 0-9, or -');
   }
   return raw;
 }
