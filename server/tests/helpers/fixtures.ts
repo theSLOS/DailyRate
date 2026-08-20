@@ -30,6 +30,25 @@ export async function restFetch(
   });
 }
 
+// deliberately sends the publishable key and NO Authorization header — this is
+// exactly what anyone who extracts the key from the Expo bundle can do
+export async function anonFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(`${supabaseUrl()}/rest/v1/${path}`, {
+    ...init,
+    headers: {
+      apikey: anonKey(),
+      'Content-Type': 'application/json',
+      ...(init.headers as Record<string, string>),
+    },
+  });
+}
+
+export async function anonRows(path: string): Promise<unknown[]> {
+  const res = await anonFetch(path);
+  const data: unknown = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
 // the entry-window rule lives in the DB (get_entry_date, shared by the insert
 // trigger and the update/delete policies) — read it rather than reimplement it
 export async function openEntryDate(jwt: string, userId: string): Promise<string | null> {

@@ -19,7 +19,7 @@ schema/RLS *what*.
 
 | Role | Who uses it | What it can see |
 |---|---|---|
-| `anon` | Unauthenticated app requests | Nothing — no anon read policy exists on `posts` |
+| `anon` | Unauthenticated app requests | `profiles_public` only (the full user directory — still an open decision, §7). Nothing on `posts` or any other table. **This was false until `20260820080000`**: no anon read *policy* existed, but `posts`' live branch passed anyway with a null `auth.uid()` — see §7 |
 | `authenticated` | Logged-in users, via the app | Own posts (any age) + everyone's live (last-36h, approved) posts on `posts`; everyone's `id`/`username`/`display_name`/`avatar_url` via the `profiles_public` view (own `profiles` row only via the base table); own like rows on `likes` (insert/delete/select own only — no "who liked this" reader); everyone's comments on any post they can see (insert own only; no update/delete yet) |
 | `service_role` | Not yet used — no Edge Functions or admin tooling exist yet | Would bypass RLS entirely if used |
 | Postgres superuser (dashboard) | You personally, for schema changes and manual ops | Everything |
@@ -472,10 +472,15 @@ may enter it.
   identity and then serve it to everyone else. `photo_url` is deliberately kept
   — since the Phase 4.5 rework the path is a bare `<uuid>.jpg` carrying no
   identity.
-- **It cannot carry the null-`auth.uid()` guard** that the correction below
-  calls mandatory: `language sql` cannot `raise`. Combined with the same
-  correction's finding that `revoke ... from public` doesn't bind `anon` here,
-  this function is callable unauthenticated — see §7.
+- **It carries the null-`auth.uid()` guard, and that is the only thing keeping
+  `anon` out of it** (`20260820080000`). `security definer` bypasses the policy
+  fix in the same migration, and `revoke execute ... from public` does not bind
+  `anon` on this project. It was originally `language sql`, which cannot
+  `raise`, and was therefore callable unauthenticated for ten days; it is now
+  `plpgsql` for the guard alone, with the query unchanged. It **raises
+  `28000`** rather than returning zero rows deliberately — an empty feed is
+  indistinguishable from a quiet day, and that ambiguity is what hid the
+  original bug. See §7.
 
 **`delete own post in entry window` (Phase 5.5, `20260810094200`):** the first
 DELETE policy on `posts`. It mirrors the existing UPDATE policy exactly
@@ -597,6 +602,9 @@ migrations so far:
   `security definer` RPC, the cacheable viewer-independent feed source (§4).
 - `supabase/migrations/20260810094200_delete_own_post_in_entry_window.sql` —
   the `delete own post in entry window` policy on `posts` (§3/§4).
+- `supabase/migrations/20260820080000_anon_read_lockdown.sql` — closes
+  unauthenticated read on live posts, makes the anonymity strip NULL-safe in
+  both feed views, and adds the `auth.uid()` guard to `feed_shared` (§1/§4/§7).
 
 Everything before that (Phases 0–2: `posts`/`profiles` schema, the
 entry-window trigger and function in §3, storage bucket policies in §5) was
@@ -663,20 +671,37 @@ don't mistake it for one more item in this "deferred by choice" list:**
   contradicts §1's claim that anon sees nothing. Needs a deliberate call: accept
   it and correct §1, or add `security_invoker` / an `auth.uid() is not null`
   gate. Weigh that this is an app whose headline feature is anonymous posting.
-- **`feed_shared` is callable by `anon`, unauthenticated** (found 2026-08-20,
-  introduced by `20260810090952`, **not yet decided**). Same root cause, one
-  step worse: `POST /rest/v1/rpc/feed_shared` carrying only the publishable key
-  and no `Authorization` header returns **`200`**, not `42501` — so the
-  `revoke execute ... from public` in that migration does not bind `anon`, the
-  5th instance of that finding. And because the function is `language sql` it
-  **cannot carry the in-body `auth.uid() is null` guard** the correction in §4
-  calls the only real defence, while its `where` clause references `auth.uid()`
-  nowhere. The observed response was `[]` purely because no post was inside the
-  36h window at the time, so the exposure is **structurally certain but not yet
-  observed with live data**. Options: wrap it in a `plpgsql` guard function,
-  accept it and record that the live feed is world-readable, or settle it
-  together with the `profiles_public` item above as one isolated "anon surface"
-  change.
+- **RESOLVED 2026-08-20 (`20260820080000`): the entire live feed was readable by
+  `anon`, and anonymous posts were deanonymized.** Recorded here because the
+  failure mode is worth keeping, not because anything is still open.
+  - **Mechanism.** `posts`' SELECT policy has two branches. The first,
+    `user_id = auth.uid()`, is NULL-safe. The second — live, approved, not
+    blocked — checked no identity at all: with a null `auth.uid()` the block
+    subquery matches zero rows, so `not exists (...)` is **TRUE** and the
+    branch passes. Every live post had therefore been world-readable since
+    `20260713074345`, five weeks. `feed_shared` did not open this; it added a
+    third door to a room already open (`posts`, `posts_feed`, the RPC).
+  - **Worse: the anonymity strip was not NULL-safe.** `is_anonymous and
+    user_id <> auth.uid()` evaluates to NULL for an anon caller (`x <> NULL` is
+    NULL; `true and NULL` is NULL), so the `CASE` fell to `ELSE` and returned
+    the real author. Measured, not inferred: an unauthenticated read of an
+    `is_anonymous` post returned its `user_id` **and** `author_display_name`.
+    In an app whose headline feature is anonymous posting.
+  - **Why it survived five weeks.** Every anon check ever run — including three
+    on the morning it was found — returned `[]` and was read as proof of
+    safety. Nothing was inside the 36h window at the time. **An empty result
+    set proves nothing about a policy**; a test asserting "X cannot see Y" must
+    first prove Y exists and is visible to someone.
+  - **The fix, three independent parts**: `auth.uid() is not null` on the live
+    branch (which transitively re-closes `comments` and both views);
+    `is distinct from` in the strip on `posts_feed` and `posts_feed_friends`,
+    so "the feed is public" can never silently also mean "anonymous authors are
+    named"; and the `plpgsql` guard on `feed_shared` in §4, since
+    `security definer` bypasses the policy entirely.
+  - **Locked by `server/tests/anonView.test.ts`**, which creates a live post
+    with a comment and a like, **proves an authenticated viewer can see all
+    three**, and only then asserts the eleven tables anon cannot read, the
+    `28000` from the RPC, and the `401` from the gateway.
 - **Front server + Redis caching layer** (Phase 5.5) — server skeleton,
   `feed_shared` and the uncached `GET /api/feed` endpoint are built; Redis
   itself is not. See the caching principles in the project guide

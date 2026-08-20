@@ -1482,8 +1482,40 @@ deferred, not forgotten.
     has **no entry for either Concept 2 migration** (no `feed_shared`, no
     delete policy, in §2/§4/§6).
 
-- **Open security question raised 2026-08-20, not yet decided: `feed_shared` is
-  callable by `anon`.** Verified directly — `POST /rest/v1/rpc/feed_shared`
+- **Security incident found and fixed 2026-08-20: the whole live feed was
+  readable by `anon`, and anonymous posts were deanonymized.** Migration
+  `20260820080000_anon_read_lockdown.sql`, applied and verified. Full mechanism
+  in `docs/database-architecture.md` §7; the parts worth carrying forward:
+  - **The bug was NULL logic, not a missing policy.** `posts`' live branch
+    (`created_at > ... and moderation_status = 'approved' and not exists
+    (blocks ... auth.uid() ...)`) checks no identity: with a null `auth.uid()`
+    the block subquery matches nothing, `not exists` is TRUE, branch passes.
+    Live since `20260713074345` — five weeks. `feed_shared` was a third door
+    to an already-open room, not the cause. My first write-up that morning
+    blamed the `revoke`/EXECUTE finding and was **wrong**.
+  - **The anonymity strip failed the same way**: `is_anonymous and user_id <>
+    auth.uid()` → NULL for anon → `CASE` falls to `ELSE` → real author. An
+    unauthenticated read returned a `user_id` and `display_name` for an
+    `is_anonymous` post.
+  - **The lesson that cost the five weeks: an empty result set proves nothing
+    about a policy.** Three anon probes that morning returned `[]` and were
+    read as safety; nothing was inside the 36h window. It was only found by
+    *first inserting a live post*, then querying as anon. Any "X cannot see Y"
+    check must prove Y is visible to someone before asserting anyone's blindness
+    — the same guard `concept3.test.ts` already applies with
+    `expect(posts.length).toBeGreaterThan(0)`.
+  - **`server/tests/anonView.test.ts` (new, 18 tests)** locks it: creates a live
+    post plus a cross-account comment and like, proves an authenticated viewer
+    sees all three, then asserts 11 tables return `[]` to anon, `feed_shared`
+    raises `28000`, and the gateway returns `401`. It also asserts the
+    *current* `profiles_public` anon-readability rather than ignoring it — if
+    that test starts failing, someone closed the open decision and the test
+    should be inverted, not deleted. Full suite now **51/51 across 4 files**.
+
+- **Superseded — the entry below was the initial, incorrect diagnosis of the
+  above, kept only to show how it was mis-framed at first:**
+  **~~Open security question raised 2026-08-20, not yet decided: `feed_shared` is
+  callable by `anon`.~~** Verified directly — `POST /rest/v1/rpc/feed_shared`
   with only the publishable key and no `Authorization` header returns **`200`**,
   not `42501`. That's the 5th instance of the standing finding that
   `revoke execute ... from public` doesn't bind `anon` on this project. Unlike
