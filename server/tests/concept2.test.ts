@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { getTestJwt } from './helpers/getTestJwt.js';
+import { loadTestSessions } from './helpers/accounts.js';
 
 const LIVE_WINDOW_HOURS = 36;
 
@@ -93,11 +93,6 @@ function ageHours(iso: string): number {
   return (Date.now() - Date.parse(iso)) / 3_600_000;
 }
 
-function uidFromJwt(jwt: string): string {
-  const payload: unknown = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString('utf8'));
-  return (payload as { sub: string }).sub;
-}
-
 describe('Concept 2 — feed_shared is a viewer-independent feed source', () => {
   let jwtA: string;
   let jwtB: string;
@@ -109,19 +104,11 @@ describe('Concept 2 — feed_shared is a viewer-independent feed source', () => 
   let fixtureSkipReason: string | null = null;
 
   beforeAll(async () => {
-    const emailA = process.env.TEST_ACCOUNT_1_EMAIL;
-    const passwordA = process.env.TEST_ACCOUNT_1_PASSWORD;
-    const emailB = process.env.TEST_ACCOUNT_2_EMAIL;
-    const passwordB = process.env.TEST_ACCOUNT_2_PASSWORD;
-    assert(
-      emailA && passwordA && emailB && passwordB,
-      'test account credentials missing — check server/.env.test.local'
-    );
-
-    jwtA = await getTestJwt(emailA, passwordA);
-    jwtB = await getTestJwt(emailB, passwordB);
-    uidA = uidFromJwt(jwtA);
-    uidB = uidFromJwt(jwtB);
+    const [first, second] = await loadTestSessions(2);
+    jwtA = first.jwt;
+    jwtB = second.jwt;
+    uidA = first.userId;
+    uidB = second.userId;
 
     const entryDate = await openEntryDate(jwtA, uidA);
     if (entryDate === null) {

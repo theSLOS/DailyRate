@@ -1,8 +1,7 @@
-import assert from 'node:assert';
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
-import { getTestJwt } from './helpers/getTestJwt.js';
+import { loadTestSessions } from './helpers/accounts.js';
 
 const app = createApp();
 
@@ -24,17 +23,9 @@ describe('Concept 1 — JWT-forwarding plumbing (GET /api/me/profile)', () => {
     let token2: string;
 
     beforeAll(async () => {
-      const email1 = process.env.TEST_ACCOUNT_1_EMAIL;
-      const password1 = process.env.TEST_ACCOUNT_1_PASSWORD;
-      const email2 = process.env.TEST_ACCOUNT_2_EMAIL;
-      const password2 = process.env.TEST_ACCOUNT_2_PASSWORD;
-      assert(
-        email1 && password1 && email2 && password2,
-        'test account credentials missing — check server/.env.test.local (see .env.test.example)'
-      );
-
-      token1 = await getTestJwt(email1, password1);
-      token2 = await getTestJwt(email2, password2);
+      const [first, second] = await loadTestSessions(2);
+      token1 = first.jwt;
+      token2 = second.jwt;
     });
 
     // this is the one test that actually proves the per-request client factory —

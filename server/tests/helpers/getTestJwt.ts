@@ -19,3 +19,8 @@ export async function getTestJwt(email: string, password: string): Promise<strin
 
   return (data as { access_token: string }).access_token;
 }
+
+export function uidFromJwt(jwt: string): string {
+  const payload: unknown = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString('utf8'));
+  return (payload as { sub: string }).sub;
+}
