@@ -9,6 +9,7 @@ export type ButtonProps = {
   disabled?: boolean;
   variant?: ButtonVariant;
   className?: string; // outer layout only (margin/spacing) — internal look comes from variant
+  testID?: string;
 };
 
 const VARIANT_CLASSES: Record<ButtonVariant, { pressable: string; text: string }> = {
@@ -22,11 +23,13 @@ export function Button({
   disabled = false,
   variant = 'plain',
   className,
+  testID,
 }: ButtonProps): JSX.Element {
   const { pressable, text } = VARIANT_CLASSES[variant];
 
   return (
     <Pressable
+      testID={testID}
       onPress={onPress}
       disabled={disabled}
       className={[pressable, className].filter(Boolean).join(' ')}

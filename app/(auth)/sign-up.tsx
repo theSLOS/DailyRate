@@ -3,6 +3,7 @@ import { View, Text, TextInput, StyleSheet } from 'react-native';
 import { Link } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
+import { TEST_IDS } from '@/constants/testIds';
 
 export default function SignUpScreen(): JSX.Element {
   const [email, setEmail] = useState('');
@@ -26,8 +27,13 @@ export default function SignUpScreen(): JSX.Element {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Sign up</Text>
-      {error && <Text style={styles.error}>{error}</Text>}
+      {error && (
+        <Text testID={TEST_IDS.signUp.error} style={styles.error}>
+          {error}
+        </Text>
+      )}
       <TextInput
+        testID={TEST_IDS.signUp.email}
         style={styles.input}
         placeholder="Email"
         value={email}
@@ -36,6 +42,7 @@ export default function SignUpScreen(): JSX.Element {
         keyboardType="email-address"
       />
       <TextInput
+        testID={TEST_IDS.signUp.password}
         style={styles.input}
         placeholder="Password"
         value={password}
@@ -43,6 +50,7 @@ export default function SignUpScreen(): JSX.Element {
         secureTextEntry
       />
       <TextInput
+        testID={TEST_IDS.signUp.confirmPassword}
         style={styles.input}
         placeholder="Confirm Password"
         value={confirmPassword}
@@ -50,6 +58,7 @@ export default function SignUpScreen(): JSX.Element {
         secureTextEntry
       />
       <Button
+        testID={TEST_IDS.signUp.submit}
         label={loading ? 'Signing up...' : 'Sign up'}
         onPress={handleSignUp}
         disabled={loading}
