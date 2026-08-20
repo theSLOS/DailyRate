@@ -8,6 +8,7 @@ days on an Explore feed, react with likes, and comment — but posts are
 
 Full product spec: [`memory/daily-rating-social-app-spec.md`](memory/daily-rating-social-app-spec.md)
 Backend design (as actually built): [`docs/database-architecture.md`](docs/database-architecture.md)
+E2E selectors & test-ID convention: [`docs/e2e-testing-and-test-ids.md`](docs/e2e-testing-and-test-ids.md)
 
 ## Stack
 
@@ -59,6 +60,7 @@ drifts from the live schema, regenerate it with
 `npx supabase gen types typescript`.
 
 **2. Client app:**
+
 ```bash
 npm install
 cp .env.example .env   # fill in EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY
@@ -66,6 +68,7 @@ npx expo start
 ```
 
 **3. Server** (separate process, own dependencies):
+
 ```bash
 cd server
 npm install
@@ -84,3 +87,16 @@ manual/scripted verification recorded in `memory/project-phase-status.md`
 used more than two such accounts (`dummy1probe`–`dummy8`) — recreating that
 full test fixture is a bigger lift than the two accounts the automated
 suites need.
+
+Some server tests **skip rather than fail** when the DB-enforced entry window
+is in its 12pm–4pm dead zone and a post fixture can't be created. Skips there
+are expected, not a broken suite.
+
+**End-to-end.** No E2E runner is installed yet, but the UI already carries
+stable selectors: `testID` props sourced from
+[`constants/testIds.ts`](constants/testIds.ts), which `react-native-web`
+renders as `data-testid`. Currently covering the sign-in and sign-up screens.
+See [`docs/e2e-testing-and-test-ids.md`](docs/e2e-testing-and-test-ids.md) for
+the convention, how to observe auth success, and what integrating Cypress will
+need — including a NativeWind exception that fires on every page load under a
+browser runner and must be handled explicitly.

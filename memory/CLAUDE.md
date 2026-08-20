@@ -165,6 +165,16 @@ utils/                 # Pure functions with no side effects
 - No inline styles. Use NativeWind classes. If a style can't be expressed in NativeWind, use a `StyleSheet.create` at the bottom of the file.
 - No business logic or data fetching inside components. Move it to a custom hook in `hooks/`.
 - Props types defined inline above the component, not imported from elsewhere unless shared.
+- **Every new UI component carries `testID`s.** Interactive elements (inputs,
+  buttons, pressables) and anything a test asserts on (error text, empty
+  states, loading indicators) get one; purely decorative elements don't.
+  Values come from `constants/testIds.ts` — never an inline string literal —
+  so E2E specs can import the same constant and a rename can't leave them
+  behind. `react-native-web` renders `testID` as `data-testid`, so one prop
+  serves both RNTL and browser-based E2E. Shared primitives in
+  `components/ui/` have closed props types with no spread, so each must
+  declare an optional `testID?: string` and forward it to its root element.
+  See `docs/e2e-testing-and-test-ids.md`.
 
 ### Data fetching
 
@@ -222,6 +232,7 @@ When you share code for review, Claude will check:
 
 - [ ] TypeScript strict compliance (no `any`, explicit types)
 - [ ] Component has no inline data fetching or business logic
+- [ ] New UI components carry `testID`s sourced from `constants/testIds.ts`
 - [ ] Supabase query checks `error` before using `data`
 - [ ] Loading and error states are handled on every async call, not just the Supabase `error` field
 - [ ] New or changed tables have RLS implications called out explicitly
