@@ -1564,3 +1564,155 @@ originating session's ephemeral scratchpad (`scratchpad/dummy-accounts.env`)
 across sessions or machines. Re-running any of the REST-level verification
 scripts referenced throughout this file requires the user to supply these
 credentials fresh; they cannot be recovered from git history or this file.
+
+---
+
+Phase 5.5 **Concept 4 (Redis caching on the shared feed) started 2026-08-20**.
+Split into five steps; **steps 1–2 are built, verified and committed
+(`69c5195`), steps 3–5 are not started**. No endpoint reads the cache yet.
+
+- **Four decisions settled before any code**: the `redis` package (node-redis,
+  `^6.2.1`) over `ioredis`; a Docker Desktop container rather than WSL/Memurai/
+  hosted; a **30s TTL** (the constant itself lands in step 3); and **fail open**
+  — Redis unavailable is a cache miss, never an error.
+  - Container is `dayrate-redis` (`redis:7-alpine`, `-p 6379:6379`),
+    **deliberately with no volume mount** — a cache surviving restarts holds
+    feed rows from whenever you last worked, which is worse than an empty one.
+    `docker start dayrate-redis` on later sessions; `docker run` again would
+    conflict on the name.
+  - `REDIS_URL=redis://localhost:6379` added to `server/.env` **and**
+    `server/.env.example`.
+
+- **Step 1 — `server/src/lib/redis.ts`** (`connectRedis` / `getCache` /
+  `setCache`). Shape is the opposite of `supabaseClient.ts`: that file holds no
+  module state and builds a fresh client per request because each carries a
+  different JWT; Redis has no per-user identity, so it is one connection created
+  once and shared process-wide.
+  - **The one blocking bug, and the lesson worth keeping: `await
+    connectRedis()` in `index.ts` hung the boot forever.** node-redis's default
+    `reconnectStrategy` retries indefinitely, so `client.connect()` **never
+    rejects** — the `try/catch` around it was unreachable, `client = null` never
+    ran, and `app.listen` was never reached. With Redis down the API was simply
+    dead. Every other part of the fail-open design (the `isReady` guards, the
+    catches, the null reset) was already correct; one `await` defeated all of
+    it. **You can only fail open on a failure that actually arrives** — when
+    depending on something optional, ask not just "do I handle the error?" but
+    "is this failure guaranteed to be reported, and when?" A library that
+    retries on your behalf is exactly the case where the answer is "never".
+  - Fixed by making `connectRedis` **non-`async`** and leaving
+    `client.connect()` unawaited (`void ... .catch(...)`), which also removed
+    the top-level `await` from `index.ts`. Considered and rejected: keeping the
+    `await` with a `Promise.race` timeout — it buys only startup log ordering,
+    the determinism is illusory (Redis can die a second later, so every runtime
+    guard is still required), and it adds four things that must each be right
+    (catch-before-race, resolve-not-reject, `.unref()`, the constant). **Revisit
+    only if Concept 8's rate limiter makes Redis a hard dependency**; the likely
+    landing spot even then is per-request rejection, not a boot-time gate.
+  - **`client.on('error', ...)` is mandatory, not hygiene.** node-redis's client
+    is an `EventEmitter`, and an `'error'` event with no listener *throws* and
+    kills the process. It must be registered **before** `connect()`, since the
+    connection can fail during it. Note this file therefore has two independent
+    error paths that look redundant but are not: `try/catch` owns failures of
+    commands you issued, the listener owns failures the connection reports on
+    its own.
+  - **`disableOfflineQueue: true` is required for cache semantics.** By default
+    node-redis *queues* commands issued while disconnected and replays them on
+    reconnect — correct for a job queue, actively wrong here, since
+    `await client.get(key)` would then hang awaiting reconnect instead of
+    failing, turning an outage into hung requests rather than misses.
+  - Guards are on **`client?.isReady`, not `client !== null`** — non-null only
+    means an object was constructed; `isReady` means the socket can serve
+    commands. The gap between them is precisely the outage case.
+  - `outageLogged` (module-scoped boolean, set in `'error'`, cleared in
+    `'ready'`) collapses the retry storm to one line per outage. `'ready'` fires
+    on every successful *re*connect, so each outage yields a paired
+    "gone"/"back". `errorCode(err: unknown): string` narrows without `any` —
+    node-redis types the emitted error as `Error`, which carries no `code`.
+  - **Verified by A/B boot, not by inspection**: Redis up → `redis connected`
+    then `server started`; Redis down → `server started` **first**, then exactly
+    one `redis unavailable, cache disabled` line with `code: ECONNREFUSED`, and
+    `GET /api/me/profile` still answering `401` (i.e. serving, not crashed).
+    Then a live outage: server booted at `155409`, one error line at `155421`,
+    container started ~18s later, `redis connected` at `173839` — **one log line
+    across an 18-second outage** (unguarded it would have been ~18 at the 3s
+    backoff cap) and self-healing with no restart.
+  - **Smoke-tested in isolation before the route was touched** (throwaway script,
+    deleted after): nested object round-trips through `JSON.stringify`/`parse`;
+    a missing key returns `null`; and `redis-cli ttl` reported **29**, proving
+    `EX` is **seconds** — had it been milliseconds a 30ms key would have expired
+    before the `GET` and `ttl` would read `-2`.
+
+- **Step 2 — `server/src/lib/feedCacheKey.ts`**, pure `ParsedFeedQuery →
+  string`. Sentinel `~` for `null`, separator `|`, prefix `feed`, all constants
+  in `server/src/constants/redis.ts`. Example: `feed|state|AU-NSW|~|20`.
+  - Built with array + `join(SEPARATOR)` rather than a template literal so the
+    separator appears **once** in the source — a template would spell `|` four
+    times and a typo in any one still *looks* right.
+  - **The invariant that makes it unambiguous** (stated as the file's `why`
+    comment): no field can contain `|` or `~` — `variant` is a closed set of
+    four literals, `limit` a bounded integer, `cursor` `toISOString()` output,
+    and `regionCode` is now charset-constrained. Before this concept that last
+    one was an assumption, not a fact.
+  - **`REGION_REGEX = /^[A-Za-z0-9-]{1,16}$/` added to `constants/feed.ts` and
+    enforced in `parseRegionCode`.** `region` was previously validated for
+    presence but never shape, which was harmless while it only flowed into a SQL
+    comparison that matched zero rows. **The instant a client-supplied value
+    becomes a key rather than a filter, its validation requirements change** — a
+    filter with a junk value returns nothing, a key with a junk value *allocates*
+    something. Unvalidated, `?region=<random>` mints unbounded distinct cache
+    keys, each a miss costing a Postgres query and a Redis entry nobody reads.
+    The realistic risk is that cardinality/cache-busting, not key collision
+    (with a fixed five-segment layout and a validated cursor, forging a
+    collision is hard).
+  - Case is still permissive (`A-Za-z`), so `au-nsw` validates, becomes its own
+    key, and can only ever miss — the RPC compares `region_code` exactly.
+    Narrowing to uppercase-only is the "reject rather than transform" option,
+    left open pending a look at the real `region_boundaries.state_code` values.
+  - Verified by generating keys across the param space: five distinct requests →
+    five distinct keys; identical params → identical key.
+
+- **The placeholder-paste pattern recurred twice in one concept** (5th and 6th
+  instances after `blocker.sql`, `posts_feed`, `friends.sql`, the reply JSX):
+  the `'error'`/`'ready'` handler bodies were pasted as *my instruction comments*
+  with empty bodies, and `constants/redis.ts` was created but left empty.
+  - Consequences differed instructively. The empty handlers **passed `tsc` and
+    ESLint** — a comment-only body is legal syntax — and failed silently as
+    *absent behaviour*: crash protection survived (an empty listener is still a
+    listener) but every Redis log vanished, trading the storm for a blackout.
+    The empty constants file failed loudly instead, as an **ESM link-time
+    `SyntaxError`** before a line of code ran.
+  - Also worth noting `server/.eslintrc.json` extends nothing, so
+    `no-empty-function` is not enabled — the runtime A/B test was the only net,
+    not the linter. Captured as a standing correction on Claude's side: sketches
+    must not contain paste-ready empty bodies, and reviews immediately after a
+    pseudocode message should check for paste artifacts first.
+  - Related recurring category: an extracted constant that is never imported.
+    `REGION_REGEX` was defined in `constants/feed.ts` while `parseRegionCode`
+    kept the pattern inline — strictly worse than the inline literal alone, and
+    invisible to `tsc` (`noUnusedLocals` does not flag unused *exports*). Grep
+    the identifier right after extracting it.
+
+- **Steps 3–5 still to do**: (3) read-through in `routes/feed.ts` —
+  `FEED_CACHE_TTL_SECONDS = 30`, `getCache` before the RPC, `setCache` of the
+  **whole `{ posts, nextCursor }` envelope** (not just `posts`, so the keyset
+  rule stays in one place), hit/miss logging; (4) **single-flight** on the miss
+  path; (5) tests.
+  - **Single-flight came from the user's own question** — "a harsher rate
+    limiter per person while Redis is down?" The instinct was right, the tool
+    wrong: the rate limiter *is* Redis (`memory/CLAUDE.md`'s stateless rule
+    forbids in-memory counters, and three instances would give 3× the intended
+    limit). What is actually at risk when the cache dies is Postgres, not
+    fairness — that is a **cache stampede**, and the fix is deduplication, not
+    throttling. Single-flight (`Map<string, Promise<T>>`, keyed the same as the
+    cache) needs no shared state, so it is *correct* per-instance rather than
+    merely tolerable. Two details to get right: `delete` in `.finally` (not
+    `.then`, or a failed query leaves a poisoned rejected promise under that
+    key), and the map holds the **promise**, not the value.
+  - **Hard constraint for step 3**: the cache lookup must stay **behind
+    `requireAuth`**. `feed_shared` carries the `auth.uid() is null` guard from
+    `20260820080000`, and Redis has no RLS — a cache consulted before
+    authentication would hand a signed-in user's blob to an anonymous caller,
+    reopening exactly what that migration closed.
+
+- **Server suite 53/53 across 4 files** after steps 1–2, confirming the
+  `REGION_REGEX` addition broke no existing case.

@@ -28,7 +28,7 @@ INTERNAL_ERROR` (unhandled). `429` is reserved for the rate-limited writes.
   `(user_id, action)`. Post creation is deliberately excluded: it is already
   throttled by `unique(user_id, local_date)` plus the entry window.
 
-Status: **✅ built** · **⬜ not started**
+Status: **✅ built** · **🟡 in progress** · **⬜ not started**
 
 ---
 
@@ -53,10 +53,29 @@ feed reads from (`supabase/migrations/20260810090952_shared_feed.sql`).
 state → country → most-liked fallback stays client-side; this endpoint maps 1:1
 onto the RPC.
 
-## Concept 4 — Redis ⬜
+## Concept 4 — Redis 🟡
 
 No new endpoint. Wraps `GET /api/feed` in a cache keyed by the parsed query.
 Introduces the `redis` dependency.
+
+Five steps; **1–2 built, 3–5 not started** — no endpoint reads the cache yet.
+
+| Step | What                                                      | Status |
+| ---- | --------------------------------------------------------- | ------ |
+| 1    | Redis container + `lib/redis.ts` (fail-open client)       | ✅     |
+| 2    | `lib/feedCacheKey.ts` + `REGION_REGEX` validation         | ✅     |
+| 3    | Read-through in `routes/feed.ts`, 30s TTL                 | ⬜     |
+| 4    | Single-flight on the miss path                            | ⬜     |
+| 5    | Tests (cache hit, Redis-down fail-open, concurrent misses) | ⬜     |
+
+The cache is **optional infrastructure**: `connectRedis` is unawaited, every
+read and write is gated on `isReady`, and any failure collapses to a miss, so
+the gateway serves normally with Redis stopped.
+
+**The cache lookup sits behind `requireAuth`, and must stay there.**
+`feed_shared` carries an `auth.uid() is null` guard (`20260820080000`) and Redis
+has no RLS — a cache consulted before authentication would serve a signed-in
+user's blob to an anonymous caller.
 
 ## Concept 5 — personal post reads ⬜
 

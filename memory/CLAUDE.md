@@ -49,7 +49,7 @@ Implement one concept, verify it in isolation directly against the DB/API (not t
 | 4.7   | Friends (two-way mutual follow) — relationships only                   | complete                                                                    |
 | 4.8   | Friends feed + Friends tab                                             | complete                                                                    |
 | 5     | Filtering & proximity (region-based, not distance-radius — see memory) | complete                                                                    |
-| 5.5   | Front server + Redis caching layer                                     | in progress (Concepts 1–2 complete; Concept 3 built, content tests pending) |
+| 5.5   | Front server + Redis caching layer                                     | in progress (Concepts 1–3 complete; Concept 4 steps 1–2 of 5 built)         |
 | 6     | Notifications                                                          | not started                                                                 |
 | 7     | Trust, safety & privacy                                                | not started                                                                 |
 | 8     | Polish & performance                                                   | not started                                                                 |
@@ -64,9 +64,10 @@ Update the status column as phases complete.
 
 A front server (Node/Express) sits between the client and Supabase. Concept 1
 (server skeleton + JWT-forwarding), Concept 2 (the `feed_shared` RPC) and
-Concept 3 (`GET /api/feed`, uncached) are built; the rest below are standing
-decisions for the concepts still to come, so the design doesn't drift
-mid-phase. Auth and RLS stay entirely Supabase's job; the server forwards the
+Concept 3 (`GET /api/feed`, uncached) are built, and Concept 4 (Redis) is
+part-built — the fail-open client and the cache-key derivation exist, but no
+endpoint reads the cache yet. The rest below are standing decisions for the
+concepts still to come, so the design doesn't drift mid-phase. Auth and RLS stay entirely Supabase's job; the server forwards the
 user's JWT unmodified
 (`createClient(..., { global: { headers: { Authorization: jwt } } })`) and
 never uses `service_role` for user-facing requests.
