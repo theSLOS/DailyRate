@@ -3,6 +3,7 @@ import { requestLogger } from './middleware/requestLogger.js';
 import { requireAuth } from './middleware/requireAuth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { meRouter } from './routes/me.js';
+import { feedRouter } from './routes/feed.js';
 
 export function createApp(): Express {
   const app = express();
@@ -15,6 +16,8 @@ export function createApp(): Express {
   app.use('/api/me', requireAuth, meRouter); // requireAuth runs BEFORE the route handler —
   // rejects with 401 before meRouter ever sees
   // a request with no/bad token
+
+  app.use('/api/feed', requireAuth, feedRouter);
 
   app.use(errorHandler); // MUST be registered LAST — Express recognizes
   // error-handling middleware by its 4-arg signature
