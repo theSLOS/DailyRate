@@ -19,7 +19,7 @@ schema/RLS *what*.
 
 | Role | Who uses it | What it can see |
 |---|---|---|
-| `anon` | Unauthenticated app requests | `profiles_public` only (the full user directory — still an open decision, §7). Nothing on `posts` or any other table. **This was false until `20260820080000`**: no anon read *policy* existed, but `posts`' live branch passed anyway with a null `auth.uid()` — see §7 |
+| `anon` | Unauthenticated app requests | **Nothing.** True as of `20260820080000` + `20260820090000`, and not before: no anon read *policy* ever existed, but `posts`' live branch passed with a null `auth.uid()`, and `profiles_public` served the whole user directory to anyone — see §7 |
 | `authenticated` | Logged-in users, via the app | Own posts (any age) + everyone's live (last-36h, approved) posts on `posts`; everyone's `id`/`username`/`display_name`/`avatar_url` via the `profiles_public` view (own `profiles` row only via the base table); own like rows on `likes` (insert/delete/select own only — no "who liked this" reader); everyone's comments on any post they can see (insert own only; no update/delete yet) |
 | `service_role` | Not yet used — no Edge Functions or admin tooling exist yet | Would bypass RLS entirely if used |
 | Postgres superuser (dashboard) | You personally, for schema changes and manual ops | Everything |
@@ -82,7 +82,7 @@ display_name  text
 avatar_url    text
 ```
 
-Plain view (`create view ... as select id, username, display_name, avatar_url from profiles;`) with `grant select ... to authenticated`, and no `security_invoker`. That last part matters: a view without `security_invoker` runs as its *creator*, not the querying user — which is what lets it read every row of the owner-only-RLS `profiles` table and expose just these four columns to any signed-in user, without touching `profiles`'s own RLS at all. The column list is the entire privacy boundary here; there's no RLS check on the view itself, so anything added to that `select` becomes public immediately. Deliberately excludes `bio`, `role`, `is_suspended`, `notification_preferences`, `reminder_time`, `timezone`, `tier`.
+Plain view (`select id, username, display_name, avatar_url from profiles where auth.uid() is not null;`) with `grant select ... to authenticated`, and no `security_invoker`. The `where` clause was added by `20260820090000` — without it the view served the entire user directory to unauthenticated callers (§7). **It stays a plain view deliberately**: `security_invoker = on` would apply `profiles`' owner-only RLS and break every cross-user author name in the app. The bypass is the feature; only the missing identity check was added. That last part matters: a view without `security_invoker` runs as its *creator*, not the querying user — which is what lets it read every row of the owner-only-RLS `profiles` table and expose just these four columns to any signed-in user, without touching `profiles`'s own RLS at all. The column list is the entire privacy boundary here; there's no RLS check on the view itself, so anything added to that `select` becomes public immediately. Deliberately excludes `bio`, `role`, `is_suspended`, `notification_preferences`, `reminder_time`, `timezone`, `tier`.
 
 ```sql
 -- likes (Phase 4)
@@ -605,6 +605,9 @@ migrations so far:
 - `supabase/migrations/20260820080000_anon_read_lockdown.sql` — closes
   unauthenticated read on live posts, makes the anonymity strip NULL-safe in
   both feed views, and adds the `auth.uid()` guard to `feed_shared` (§1/§4/§7).
+- `supabase/migrations/20260820090000_profiles_public_requires_auth.sql` — adds
+  `where auth.uid() is not null` to `profiles_public`, closing unauthenticated
+  reads of the user directory (§1/§7).
 
 Everything before that (Phases 0–2: `posts`/`profiles` schema, the
 entry-window trigger and function in §3, storage bucket policies in §5) was
@@ -656,21 +659,30 @@ so drift like this doesn't recur.
   `profiles.friend_count` column with a counter trigger, the `posts.like_count`
   pattern.
 
-**⚠️ The following is a genuine open question, not an accepted trade-off —
-don't mistake it for one more item in this "deferred by choice" list:**
+**⚠️ The two entries below were open questions, both closed on 2026-08-20.
+Kept because the failure modes are worth remembering, not because anything is
+still undecided here.**
 
-- **`profiles_public` is readable by `anon`, unauthenticated** (found
-  2026-07-28, pre-existing since `20260713092053`, **not yet decided**). A
-  `GET /rest/v1/profiles_public` carrying only the publishable key and no
-  `Authorization` header returns real rows — ids, usernames, display names,
-  avatars. Every RLS-protected *table* correctly returns `[]` to anon (their
-  policies all reference `auth.uid()`, which is null), but `profiles_public` is a
-  plain view with no `security_invoker` and no `auth.uid()` check anywhere, so
-  nothing gates it. **This means the full user directory is world-readable to
-  anyone holding the publishable key, which ships in the Expo bundle** — and it
-  contradicts §1's claim that anon sees nothing. Needs a deliberate call: accept
-  it and correct §1, or add `security_invoker` / an `auth.uid() is not null`
-  gate. Weigh that this is an app whose headline feature is anonymous posting.
+- **RESOLVED 2026-08-20 (`20260820090000`): `profiles_public` served the whole
+  user directory to unauthenticated callers.** Found 2026-07-28, pre-existing
+  since `20260713092053`. A `GET /rest/v1/profiles_public` carrying only the
+  publishable key returned every row — ids, usernames, display names — with
+  `?username=eq.…` filtering (a username → uuid oracle) and an exact user count
+  from the `Content-Range` header.
+  - **Not a defect; an unstated assumption.** Unlike the `posts` entry below,
+    the view did exactly what it was written to do. Phase 3 needed four columns
+    readable *cross-user* so authors could render without widening `profiles`'
+    owner-only RLS; "cross-user" was implemented as "everyone", and the
+    assumption that a reader would be signed in was never written down.
+  - **Closed by adding `where auth.uid() is not null`** — nothing in the app
+    needed it, since every route sits behind an auth gate.
+  - **`security_invoker = on` was the tempting fix and the wrong one**: it
+    would apply `profiles`' owner-only policy to the view and break every
+    cross-user author name. The RLS bypass is the view's purpose; only the
+    identity check was missing. `posts_feed` **left**-joins this view, so that
+    mistake would not have errored — every author would have silently become
+    null and every post would have rendered as "Anonymous". A positive
+    assertion in `anonView.test.ts` now guards it.
 - **RESOLVED 2026-08-20 (`20260820080000`): the entire live feed was readable by
   `anon`, and anonymous posts were deanonymized.** Recorded here because the
   failure mode is worth keeping, not because anything is still open.

@@ -105,6 +105,10 @@ describe('anon visibility — what an unauthenticated caller can and cannot see'
       ['friend_requests', 'friend_requests?select=requester_id'],
       ['reports', 'reports?select=id'],
       ['region_boundaries', 'region_boundaries?select=id'],
+      // closed 20260820090000. It stays a plain view — the RLS bypass is what
+      // renders cross-user author names — so an auth.uid() check was added
+      // rather than security_invoker, which would have broken those names.
+      ['profiles_public', 'profiles_public?select=id,username'],
     ])('%s returns no rows', async (_label, path) => {
       if (skipReason !== null) return;
       expect(await anonRows(path)).toEqual([]);
@@ -131,16 +135,28 @@ describe('anon visibility — what an unauthenticated caller can and cannot see'
     });
   });
 
-  // profiles_public is a plain view with no security_invoker and no auth.uid()
-  // check, so anon reads it. Pre-existing since 20260713092053 and still an open
-  // decision (docs/database-architecture.md §7). This asserts the CURRENT
-  // behaviour so the decision is made deliberately — if it starts failing,
-  // someone closed it and this test should be inverted, not deleted.
-  describe('anon can read — accepted, pending a decision', () => {
-    it('profiles_public exposes the user directory', async () => {
-      expect((await anonRows('profiles_public?select=id,username&limit=5')).length).toBeGreaterThan(
-        0
-      );
+  // the same four columns must stay readable to a logged-in user: the view's
+  // whole purpose is rendering post and comment authors across accounts, and
+  // the obvious "fix" for the anon leak (security_invoker = on) would have
+  // silently broken exactly this
+  describe('an authenticated viewer still gets the profile directory', () => {
+    it('profiles_public returns rows with a session', async () => {
+      const res = await restFetch(other.jwt, 'profiles_public?select=id,username&limit=5');
+      expect(((await res.json()) as unknown[]).length).toBeGreaterThan(0);
+    });
+
+    // posts_feed LEFT JOINs profiles_public, so a view that wrongly returns
+    // nothing would not error — every author would quietly become null and the
+    // app would label every post "Anonymous". Assert the name is really there.
+    it('resolves another user as the author of a non-anonymous post', async (ctx) => {
+      if (skipReason !== null) ctx.skip(skipReason);
+
+      const rows = (await (
+        await restFetch(other.jwt, `posts_feed?select=id,author_display_name&id=eq.${postId}`)
+      ).json()) as { author_display_name: string | null }[];
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].author_display_name).not.toBeNull();
     });
   });
 

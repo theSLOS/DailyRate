@@ -1512,8 +1512,24 @@ deferred, not forgotten.
     that test starts failing, someone closed the open decision and the test
     should be inverted, not deleted. Full suite now **51/51 across 4 files**.
 
+- **`profiles_public` closed the same day (`20260820090000`).** It had served
+  the entire user directory to unauthenticated callers since `20260713092053`
+  — every row, filterable by username, with an exact user count from the
+  `Content-Range` header. Unlike the `posts` bug this was **not a defect**: the
+  view did what it was written to do, and "cross-user" simply meant "everyone"
+  because the assumption that a reader is signed in was never stated. Closed
+  with `where auth.uid() is not null`; nothing in the app needed it, since
+  every route sits behind an auth gate.
+  - **`security_invoker = on` was the wrong fix and worth remembering why**: it
+    would apply `profiles`' owner-only RLS to the view and break every
+    cross-user author name — and because `posts_feed` **left**-joins it, that
+    would not have errored. Every author would have silently become null and
+    every post would have rendered as "Anonymous". No existing test would have
+    caught it, so `anonView.test.ts` gained a positive assertion that another
+    user's `author_display_name` is non-null. Suite now **52/52**.
+
 - **Superseded — the entry below was the initial, incorrect diagnosis of the
-  above, kept only to show how it was mis-framed at first:**
+  live-feed leak, kept only to show how it was mis-framed at first:**
   **~~Open security question raised 2026-08-20, not yet decided: `feed_shared` is
   callable by `anon`.~~** Verified directly — `POST /rest/v1/rpc/feed_shared`
   with only the publishable key and no `Authorization` header returns **`200`**,
