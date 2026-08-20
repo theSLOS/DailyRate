@@ -446,6 +446,48 @@ accepted inference channel.
 > portable and free — but never let it be the sole defence. Every `security
 > definer` function in this project needs the guard.
 
+**`feed_shared(variant, region_code, cursor_ts, page_size)` (Phase 5.5,
+`20260810090952`):** `returns setof public.posts_feed`, `language sql stable
+security definer set search_path = public`. It exists so the front server can
+cache one feed blob in Redis and hand the **identical bytes to every viewer** —
+a result that varies per requester cannot be shared, so nothing viewer-specific
+may enter it.
+
+- **`security definer` means `posts`' RLS does not run on this path.** The
+  `created_at > now() - interval '36 hours'` and `moderation_status =
+  'approved'` predicates in the `where` clause are therefore the *only* thing
+  enforcing ephemerality and moderation here. Removing either silently widens
+  what the cache serves — there is no policy behind them as a backstop.
+- **Two clauses from "select own or live posts" are deliberately not ported**:
+  the block subquery and the `user_id = auth.uid()` owner bypass. Both are
+  viewer-specific by definition. Blocking is filtered client-side and stays
+  RLS-enforced everywhere it matters (post detail, comments, likes, Storage);
+  the missing owner bypass means an author's own expired post is absent from
+  this feed, which is correct — it's a shared feed, not a personal one.
+- **The anonymity strip is unconditional** — no `auth.uid()` anywhere in the
+  function — so an anonymous author's identity never reaches Redis. This is the
+  one place the strip must *not* be conditional: `posts_feed` keeps its
+  `is_anonymous and user_id <> auth.uid()` form for the per-viewer paths, but
+  here a conditional strip would let the author's own request cache their
+  identity and then serve it to everyone else. `photo_url` is deliberately kept
+  — since the Phase 4.5 rework the path is a bare `<uuid>.jpg` carrying no
+  identity.
+- **It cannot carry the null-`auth.uid()` guard** that the correction below
+  calls mandatory: `language sql` cannot `raise`. Combined with the same
+  correction's finding that `revoke ... from public` doesn't bind `anon` here,
+  this function is callable unauthenticated — see §7.
+
+**`delete own post in entry window` (Phase 5.5, `20260810094200`):** the first
+DELETE policy on `posts`. It mirrors the existing UPDATE policy exactly
+(`user_id = auth.uid() and local_date = get_entry_date(now(), <their tz>)`)
+rather than inventing a second rule, so it grants no reach that `.upsert()`
+didn't already have — overwriting today's entry during the open window. Outside
+the window nothing is deletable, and in the 12pm–4pm dead zone `get_entry_date`
+returns `null`, making the comparison `NULL` and the policy false. **Accepted
+cascade consequence:** `likes` and `comments` are `on delete cascade`, so
+deleting also removes engagement the post gathered during the window;
+`reports` is polymorphic (no FK) and its rows are left orphaned.
+
 > **Important correction to the mental model of `grant` in this repo
 > (verified 2026-07-28).** The per-verb `grant` lines in these migrations do
 > **not** restrict anything on the remote project: `reports` was granted
@@ -551,6 +593,10 @@ migrations so far:
   replace` of `posts_feed` that adds them to its projection (§2).
 - `supabase/migrations/20260803110000_posts_feed_friends_view.sql` — the
   `posts_feed_friends` view (§2).
+- `supabase/migrations/20260810090952_shared_feed.sql` — the `feed_shared`
+  `security definer` RPC, the cacheable viewer-independent feed source (§4).
+- `supabase/migrations/20260810094200_delete_own_post_in_entry_window.sql` —
+  the `delete own post in entry window` policy on `posts` (§3/§4).
 
 Everything before that (Phases 0–2: `posts`/`profiles` schema, the
 entry-window trigger and function in §3, storage bucket policies in §5) was
@@ -617,8 +663,24 @@ don't mistake it for one more item in this "deferred by choice" list:**
   contradicts §1's claim that anon sees nothing. Needs a deliberate call: accept
   it and correct §1, or add `security_invoker` / an `auth.uid() is not null`
   gate. Weigh that this is an app whose headline feature is anonymous posting.
-- **Front server + Redis caching layer** (Phase 5.5) — see the caching
-  principles in the project guide (`memory/CLAUDE.md`).
+- **`feed_shared` is callable by `anon`, unauthenticated** (found 2026-08-20,
+  introduced by `20260810090952`, **not yet decided**). Same root cause, one
+  step worse: `POST /rest/v1/rpc/feed_shared` carrying only the publishable key
+  and no `Authorization` header returns **`200`**, not `42501` — so the
+  `revoke execute ... from public` in that migration does not bind `anon`, the
+  5th instance of that finding. And because the function is `language sql` it
+  **cannot carry the in-body `auth.uid() is null` guard** the correction in §4
+  calls the only real defence, while its `where` clause references `auth.uid()`
+  nowhere. The observed response was `[]` purely because no post was inside the
+  36h window at the time, so the exposure is **structurally certain but not yet
+  observed with live data**. Options: wrap it in a `plpgsql` guard function,
+  accept it and record that the live feed is world-readable, or settle it
+  together with the `profiles_public` item above as one isolated "anon surface"
+  change.
+- **Front server + Redis caching layer** (Phase 5.5) — server skeleton,
+  `feed_shared` and the uncached `GET /api/feed` endpoint are built; Redis
+  itself is not. See the caching principles in the project guide
+  (`memory/CLAUDE.md`).
 - **Rate limiting**: no per-request/per-minute limiter exists or is planned.
   The only write throttle is `unique(user_id, local_date)` + the entry window;
   there is **no rate-limit trigger** and **no `expires_at` column** (ephemerality

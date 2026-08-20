@@ -11,9 +11,11 @@ parts folded into this file, `memory/CLAUDE.md`, and
 
 **Front server + Redis is Phase 5.5, sequenced after Phase 5** — it caches
 region/most-liked feed endpoints that don't exist until Phase 5, and Phase 4.5
-anonymity changes what a cached row may contain. Concept 1 (server skeleton +
-JWT-forwarding) is built as of 2026-08-08; the caching/gateway/rate-limit
-decisions below are resolved but not yet built.
+anonymity changes what a cached row may contain. Built so far: Concept 1
+(server skeleton + JWT-forwarding, 2026-08-08), Concept 2 (the `feed_shared`
+RPC, 2026-08-10) and Concept 3 (`GET /api/feed`, uncached, 2026-08-20). Redis
+itself arrives in Concept 4; the gateway/rate-limit decisions below are
+resolved but not yet built. Build log: `[[project-phase-status]]`.
 
 **The one hard design decision — shared cache vs per-user RLS — resolved
 2026-07-25.** A truly shared `feed:{region}` blob must be *identical for every

@@ -1320,6 +1320,192 @@ The remaining 15 hooks and the 3 non-pure utils (`getSignedPhotoUrl`,
 `uploadPhoto`, `pickAndCompressImage`) are still untouched — deliberately
 deferred, not forgotten.
 
+- **Concept 2 (the shared-feed RPC) built + verified 2026-08-10.** Written up
+  retroactively on 2026-08-20 — this entry was missing entirely for ten days,
+  so the file claimed "next is Concept 2" while Concept 2 was shipped and
+  tested. Reconstructed from the migrations, `concept2.test.ts` and commits
+  `27ec37a`, `e768ec6`, `a0db593`, `04519c8`, `a3c4af3`.
+  - **Migration `20260810090952_shared_feed.sql`** — `feed_shared(variant text,
+    region_code text, cursor_ts timestamptz, page_size int) returns setof
+    public.posts_feed`, `language sql stable security definer set search_path =
+    public`. This is the cacheable feed source: every caller gets identical
+    rows, so one Redis blob can serve everyone.
+    - **`security definer` means `posts`' RLS does not run on this path**, so
+      the `created_at > now() - interval '36 hours'` and `moderation_status =
+      'approved'` predicates in the `where` clause are the *only* thing
+      enforcing those rules here. Deliberately **not** ported from "select own
+      or live posts": the block subquery and the `user_id = auth.uid()` owner
+      bypass — both viewer-specific, both handled client-side by design.
+    - **The anonymity strip is unconditional** — no `auth.uid()` anywhere in
+      the function — so an anonymous author's identity never reaches Redis.
+      `posts_feed` keeps its *conditional* strip for the per-viewer paths
+      (post detail, friends feed). `photo_url` is deliberately not stripped:
+      since the Phase 4.5 rework the path is a bare `<uuid>.jpg`.
+  - **Migration `20260810094200_delete_own_post_in_entry_window.sql`** —
+    "unsend today's entry", mirroring the existing UPDATE policy rather than
+    inventing a second rule, so it grants nothing `.upsert()` didn't already
+    allow. Accepted consequence recorded in the migration itself: `likes` and
+    `comments` cascade on delete, and polymorphic `reports` rows are left
+    orphaned (revisit in Phase 7 if delete ever widens beyond the window).
+  - **`server/tests/concept2.test.ts`** covers the invariants rather than the
+    happy path: identical rows to two viewers (the property the whole cache
+    design rests on), own expired posts excluded (proving the owner bypass is
+    really gone), 36h and approved-only, the anonymity strip **hiding the
+    author from the author themselves**, `photo_url` surviving the strip, and
+    — as a deliberate canary — that a blocked user's post **is still
+    returned**. If that last one ever goes red, someone moved block filtering
+    server-side and made the feed per-viewer, i.e. uncacheable.
+  - **`04519c8` fixed a real security bug found alongside**: `pino-http` was
+    logging the full `Authorization` header on every request — live JWTs,
+    replayable for their 1h lifetime by anyone with log access. Fixed with a
+    redact list on the shared pino instance so it covers every derived logger,
+    not per call site. Same commit fixed a duplicate `endpoint` log key
+    (`req.url` is rewritten to the mount-relative path inside a router;
+    `req.originalUrl` survives mounting).
+  - **`types/database.ts` was NOT regenerated at the time** — discovered
+    2026-08-20, ten days later, when Concept 3 needed `client.rpc('feed_shared')`
+    to type-check. See below.
+
+- **Concept 3 (`GET /api/feed`, uncached) built 2026-08-20 — content
+  verification still outstanding.** The first endpoint in the gateway that
+  serves real content. No Redis: that is Concept 4, deliberately stacked on a
+  proven endpoint rather than built alongside it.
+  - **Files**: `server/src/constants/feed.ts` (variant list, `DEFAULT_PAGE_SIZE`
+    20 / `MAX_PAGE_SIZE` 50), `server/src/types/feed.ts` (`FeedSharedRow`,
+    `FeedVariant`, `ParsedFeedQuery`, `FeedResponse`),
+    `server/src/lib/parseFeedQuery.ts` (all the judgement lives here),
+    `server/src/routes/feed.ts` (~15 lines of composition), the mount in
+    `app.ts`, plus `server/tests/concept3.test.ts` and
+    `server/tests/helpers/fixtures.ts`.
+  - **The wire vocabulary is the RPC's four variants (`newest | most_liked |
+    state | country`), not the client's `ExploreFeedType`.** The client's
+    `region` type is a state → country → most-liked *fallback* that resolves a
+    tier on page 1 and carries it in the page param; resolving it needs a
+    second round trip and is per-viewer, so it stays client-side. The endpoint
+    maps 1:1 onto `feed_shared`, which is exactly what makes Concept 4's cache
+    key equal to the parsed params.
+  - **Response is an envelope, `{ posts, nextCursor }`**, with `nextCursor`
+    computed server-side — so the keyset rule lives in one place and Concept 4
+    caches one self-describing blob. **`nextCursor` is always `null` for
+    `most_liked`**: `like_count` is a mutable sort key and keyset pagination
+    over it duplicates and drops rows. That fact is now enforced in three
+    places (the RPC's `order by`, the client's `getNextPageParam`, and
+    `parseCursor`) — a future feed sorted on a mutable column needs all three.
+  - **Validation rejects rather than clamps or ignores, for cache reasons.** An
+    out-of-range `limit` is a 400, not a silent clamp (a caller asking for 200
+    and getting 50 concludes the feed ended). A stray `region` on `newest` is a
+    400, and the cursor is canonicalised through `toISOString()` — both so that
+    one logical blob can't be stored under many Redis keys. Repeated params
+    (`?variant=a&variant=b`) arrive as arrays from Express and are rejected by
+    a `typeof` narrowing rather than a cast.
+  - **`FeedSharedRow` narrows the codegen's blanket-nullable view columns**
+    (`Omit` + intersect, the same 9 columns `FeedPost` narrows in
+    `types/posts.ts`), and the route casts once at the boundary
+    (`data as FeedSharedRow[]`) — the same move the client hooks already make.
+    The two lists are duplicated across a `paths` alias that doesn't resolve
+    from `server/`; they collapse into one type once the hooks are rewired.
+  - **Four bugs during the build, three of them silent-failure shaped**: (1)
+    `export const feedRouter = feedRouter()` — self-referencing TDZ error; (2)
+    the whole `feedRouter.get(...)` registration wrapped inside an exported
+    `feedHandler()` function that nobody called — **`tsc` and ESLint both
+    clean, the route simply never registered and would 404**; (3) RPC args
+    named `cursor`/`limit` instead of `cursor_ts`/`page_size` — caught by
+    excess-property checking, but both have SQL defaults, so had it compiled
+    every request would silently return page 1 forever while `nextCursor`
+    advanced; (4) `parseCursor` first rejected `!isRegionVariant(variant)`,
+    which rejects **`newest`** — the primary paginated feed — a guard copied
+    from `parseRegionCode` without re-deriving its predicate, and one that
+    passes every "bad input rejected" test since only a page-2 request hits it.
+  - **`types/database.ts` regenerated 2026-08-20** (stale since 2026-08-03,
+    Phase 4.8). Diff was `+33` lines, `feed_shared` only, nothing removed.
+    Generated `Args` types `variant` as plain `string` (Postgres has no enum
+    there), so **`FEED_VARIANTS` in `parseFeedQuery` is the only thing
+    enforcing that vocabulary anywhere in the stack**. `Returns` came back
+    blanket-nullable, same as `posts_feed`.
+    - **New gotcha worth keeping**: `npx supabase gen types ... >
+      types/database.ts` **truncates the file before the command runs** — a
+      failed generation (not logged in, no network) leaves a zero-byte
+      `types/database.ts` and an unrelated-looking error cascade. Generate to a
+      temp file, check it, then copy. Same shape as the empty `server/.env`
+      incident in Concept 1.
+  - **Fully verified 2026-08-20.** First a 14-case curl matrix against a live
+    server (401, ten distinct 400s each with the right code and message, four
+    200s) while the feed was empty, then — once the entry window opened at
+    16:00 Sydney — the whole server suite at **32 passed / 1 skipped**, with
+    all four Concept 3 content tests running against a real fixture post:
+    identical bodies to two different viewers, `limit` honoured with a cursor
+    emitted, page 2 excluding the cursor row, and `most_liked` never emitting
+    a cursor. The single remaining skip belongs to Concept 2 (see below), not
+    Concept 3.
+  - **Test-account storage reworked the same day** (readability/usability,
+    user-requested). `server/.env.test.local` collapsed from four
+    `TEST_ACCOUNT_N_*` keys to a shared `TEST_ACCOUNT_PASSWORD` plus a
+    comma-separated `TEST_ACCOUNT_EMAILS` pool of seven accounts; new
+    `server/tests/helpers/accounts.ts` (`loadTestAccounts` / `testAccounts(n)`
+    / `loadTestSessions(n?)`, JWTs fetched in parallel) replaced the four
+    `process.env` reads + `assert` preamble duplicated across all three
+    suites; `uidFromJwt` moved to `getTestJwt.ts` and `concept2`'s private
+    copy deleted. `createLivePostFromPool` walks the pool for an account whose
+    daily slot is free, **breaking early on a dead-zone failure** since that's
+    a property of the clock, not the account.
+  - **Seeded fixtures added the same day → the server suite reached 33/33,
+    zero skips, for the first time.** New `server/tests/globalSetup.ts`
+    (registered via `vitest.config.ts`'s `globalSetup`) creates one live post
+    per pool account before any test file runs and deletes them in
+    `teardown`. This exists because `concept2`'s block canary (`still returns
+    a blocked user's post`) needs a live post **owned by another user** —
+    something no amount of single-account fixture logic can produce, and
+    exactly the kind of cross-user invariant most worth testing here.
+    - **`fileParallelism: false` was required, not merely tidier.** All three
+      suites read and write one shared Supabase project; with files running
+      concurrently, one suite's fixture insert or delete can land between
+      another suite's two requests — and `concept3`'s identical-bodies test is
+      precisely two sequential requests that must observe the same world.
+    - **`RESERVED_ACCOUNTS = 1` — the bug the first attempt hit, worth
+      remembering as a category.** Seeding *all* accounts took the suite from
+      1 skip to 4: `unique(user_id, local_date)` means seeding an account
+      spends its only post for the day, so `concept2`'s anonymous fixture got
+      a `409` and its three anonymity tests plus the delete-policy test
+      skipped. The seed was competing with the fixtures it existed to support.
+      The pool is a set of *consumable daily slots*, not just a list of
+      logins, and two consumers drawing from it need an explicit split.
+    - **Cleanup only deletes what the process created** (a module-scoped
+      array appended to as inserts succeed), so an account that already had
+      today's post is never collaterally cleared. Deletes use the creating
+      account's JWT, since the delete policy is owner-scoped *and*
+      entry-window scoped. **A hard crash leaves that day's posts behind** —
+      self-healing rather than fatal: the next run's pool walk finds fewer
+      free slots and logs `seeded 2/6` instead of `6/6`, which is the signal
+      that leftovers exist. Verified after a full run that zero
+      fixture-message posts survived.
+  - **Still outstanding**: the commit itself, and `docs/database-architecture.md`
+    has **no entry for either Concept 2 migration** (no `feed_shared`, no
+    delete policy, in §2/§4/§6).
+
+- **Open security question raised 2026-08-20, not yet decided: `feed_shared` is
+  callable by `anon`.** Verified directly — `POST /rest/v1/rpc/feed_shared`
+  with only the publishable key and no `Authorization` header returns **`200`**,
+  not `42501`. That's the 5th instance of the standing finding that
+  `revoke execute ... from public` doesn't bind `anon` on this project. Unlike
+  `friend_count`, this function is `language sql` and therefore **cannot carry
+  the in-body `auth.uid() is null` guard** that §8 calls mandatory for every
+  `security definer` function, and its `where` clause references `auth.uid()`
+  nowhere. The response was `[]` only because no post was inside the 36h window
+  at the time, so the leak is **structurally certain but not yet observed**.
+  Same family as the already-open `profiles_public`-readable-by-anon finding.
+  Options: wrap it in a `plpgsql` guard, accept and record it, or fold it in
+  with the `profiles_public` decision as one isolated "anon surface" concept.
+
+**Resolved 2026-08-20 — the gap below no longer applies.** The user supplied
+the full set; `dummy2@test.com` through `dummy8@test.com` (seven accounts) now
+live in the gitignored `server/.env.test.local` as a shared
+`TEST_ACCOUNT_PASSWORD` plus a comma-separated `TEST_ACCOUNT_EMAILS` pool,
+loaded by `server/tests/helpers/accounts.ts`. `dummy1probe` was not among them
+and remains unrecoverable. The pool is what lets `createLivePostFromPool` walk
+for an account whose daily entry slot is free, so the only remaining fixture
+skip is the genuine 12pm–4pm dead zone. Note the password also appears in
+plaintext in the paragraph below, which is tracked in git.
+
 **Known gap, not a bug: the broader dummy test-account set isn't
 recoverable from the repo.** Beyond the 2 accounts in
 `server/.env.test.local` (the Vitest suite above), most of the manual/
