@@ -23,7 +23,7 @@ A few standing rules within this workflow:
 ## Project reference
 
 Full spec: `daily-rating-social-app-spec.md`  
-Architecture references: `docs/database-architecture.md` (add one per subsystem as its design stabilizes — don't create these upfront)  
+Architecture references: `docs/database-architecture.md`, `docs/api-gateway-endpoints.md` (the front-server endpoint roster + completion status) — add one per subsystem as its design stabilizes, don't create these upfront  
 Tech stack: Expo (React Native + Web) · TypeScript · Supabase (Postgres + PostGIS + RLS + Edge Functions) · TanStack Query · NativeWind · Expo Router
 
 ---

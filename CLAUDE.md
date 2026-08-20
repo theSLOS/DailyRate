@@ -15,6 +15,7 @@ Everything else:
 - `memory/friends-feature-decisions.md` — Phase 4.7 friends (two-way follow) + soft-anonymity
 - `docs/database-architecture.md` — schema / RLS reference (the _what_)
 - `docs/feed-and-caching-architecture.md` — feed/caching/anonymity design rationale (the _why_)
+- `docs/api-gateway-endpoints.md` — front-server endpoint roster + per-concept completion status
 - `docs/e2e-testing-and-test-ids.md` — test-ID convention + what integrating an E2E runner needs
 
 > Note: two personal memory files (`user_js_familiarity.md`,
