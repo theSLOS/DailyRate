@@ -809,6 +809,39 @@ export type Database = {
         | { Args: { table_name: string }; Returns: string };
       enablelongtransactions: { Args: never; Returns: string };
       equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean };
+      feed_shared: {
+        Args: {
+          cursor_ts?: string;
+          page_size?: number;
+          region_code?: string;
+          variant: string;
+        };
+        Returns: {
+          author_avatar_url: string | null;
+          author_display_name: string | null;
+          author_username: string | null;
+          comment_count: number | null;
+          created_at: string | null;
+          id: string | null;
+          is_anonymous: boolean | null;
+          like_count: number | null;
+          local_date: string | null;
+          message: string | null;
+          moderation_status: string | null;
+          photo_url: string | null;
+          place_label: string | null;
+          rating: number | null;
+          region_country_code: string | null;
+          region_state_code: string | null;
+          user_id: string | null;
+        }[];
+        SetofOptions: {
+          from: '*';
+          to: 'posts_feed';
+          isOneToOne: false;
+          isSetofReturn: true;
+        };
+      };
       friend_count: { Args: { target_user_id: string }; Returns: number };
       geometry: { Args: { '': string }; Returns: unknown };
       geometry_above: {
