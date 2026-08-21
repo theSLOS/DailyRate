@@ -67,14 +67,34 @@ cp .env.example .env   # fill in EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE
 npx expo start
 ```
 
-**3. Server** (separate process, own dependencies):
+**3. Redis** (Phase 5.5 caching layer — the server fails open without it, so
+this is optional for basic development, but required to actually exercise the
+cache). Requires Docker Desktop with virtualization enabled in the host
+firmware (BIOS/UEFI: Intel VT-x or AMD-V):
+
+```bash
+docker run -d --name dayrate-redis -p 6379:6379 --restart unless-stopped redis:7-alpine
+```
+
+No volume — the cache holds nothing durable, so losing it on a container
+restart is expected, not a bug. If Docker Desktop restarts and the container
+doesn't come back on its own despite `--restart unless-stopped`, `docker start
+dayrate-redis` brings it back; `docker exec dayrate-redis redis-cli ping`
+should reply `PONG`.
+
+**4. Server** (separate process, own dependencies):
 
 ```bash
 cd server
 npm install
-cp .env.example .env   # fill in SUPABASE_URL / SUPABASE_ANON_KEY / PORT
+cp .env.example .env   # fill in SUPABASE_URL / SUPABASE_ANON_KEY / PORT / REDIS_URL
 npm run dev
 ```
+
+`REDIS_URL` defaults to `redis://localhost:6379`, matching the container
+above. The server logs `redis connected` on success or `no REDIS_URL, cache
+disabled` / `redis unavailable, cache disabled` otherwise — either way it
+still starts and serves requests, just without caching.
 
 **Tests.** `npm test` at the repo root runs the client suite (Jest); `npm
 test` from `server/` runs the server suite (Vitest) against a **real**
