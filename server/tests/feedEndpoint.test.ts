@@ -6,7 +6,7 @@ import { loadTestSessions, type TestSession } from './helpers/accounts.js';
 import { createLivePostFromPool, deletePost } from './helpers/fixtures.js';
 
 const app = createApp();
-const FIXTURE_MESSAGE = 'concept3 fixture — feed endpoint';
+const FIXTURE_MESSAGE = 'feedEndpoint fixture — GET /api/feed';
 
 type FeedBody = {
   posts: { id: string; created_at: string; user_id: string | null }[];
@@ -18,7 +18,7 @@ async function getFeed(token: string, query: string): Promise<{ status: number; 
   return { status: res.status, body: res.body as FeedBody };
 }
 
-describe('Concept 3 — GET /api/feed', () => {
+describe('GET /api/feed', () => {
   let sessions: TestSession[];
   let tokenA: string;
   let tokenB: string;

@@ -5,7 +5,7 @@ import { loadTestSessions } from './helpers/accounts.js';
 
 const app = createApp();
 
-describe('Concept 1 — JWT-forwarding plumbing (GET /api/me/profile)', () => {
+describe('GET /api/me/profile — JWT-forwarding plumbing', () => {
   it('rejects a request with no Authorization header', async () => {
     const res = await request(app).get('/api/me/profile');
     expect(res.status).toBe(401);

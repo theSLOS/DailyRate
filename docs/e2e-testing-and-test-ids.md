@@ -158,6 +158,6 @@ real sign-in form in exactly one spec — the one testing sign-in.
 (`get_entry_date` returns `null` in a 12pm–4pm dead zone). A spec that creates
 a post succeeds **once per test account per day**, then fails on every rerun.
 The server's Vitest suite hit exactly this and resolves it by skipping at
-runtime (see `server/tests/concept2.test.ts`). Any E2E test that posts needs
+runtime (see `server/tests/feedSharedRpc.test.ts`). Any E2E test that posts needs
 the same treatment, a pool of accounts, or a cleanup step — don't assume it can
 run on demand.

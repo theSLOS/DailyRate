@@ -7,7 +7,7 @@ const LIVE_WINDOW_HOURS = 36;
 // anonymous photo paths are a bare <uuid>.jpg since the Phase 4.5 rework — the
 // fixture mimics that shape to prove the path survives the anonymity strip
 const FIXTURE_PHOTO_PATH = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jpg';
-const FIXTURE_MESSAGE = 'concept2 fixture — anonymous strip';
+const FIXTURE_MESSAGE = 'feedSharedRpc fixture — anonymous strip';
 
 type FeedRow = {
   id: string;
@@ -93,7 +93,7 @@ function ageHours(iso: string): number {
   return (Date.now() - Date.parse(iso)) / 3_600_000;
 }
 
-describe('Concept 2 — feed_shared is a viewer-independent feed source', () => {
+describe('feed_shared RPC — viewer-independent feed source', () => {
   let jwtA: string;
   let jwtB: string;
   let uidA: string;
