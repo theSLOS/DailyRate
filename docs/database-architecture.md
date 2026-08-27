@@ -715,9 +715,12 @@ still undecided here.**
     three**, and only then asserts the eleven tables anon cannot read, the
     `28000` from the RPC, and the `401` from the gateway.
 - **Front server + Redis caching layer** (Phase 5.5) — server skeleton,
-  `feed_shared` and the uncached `GET /api/feed` endpoint are built; Redis
-  itself is not. See the caching principles in the project guide
-  (`memory/CLAUDE.md`).
+  `feed_shared`, `GET /api/feed` with Redis read-through + single-flight
+  caching, and all 14 personal-read passthrough endpoints are built and
+  tested. Not yet built: the shared feed's client-side wiring, and every
+  write (post CRUD, likes, comments, blocks, friend requests, rate limiting,
+  storage). See `docs/api-gateway-endpoints.md` for the live per-endpoint
+  status and the caching principles in the project guide (`memory/CLAUDE.md`).
 - **Rate limiting**: no per-request/per-minute limiter exists or is planned.
   The only write throttle is `unique(user_id, local_date)` + the entry window;
   there is **no rate-limit trigger** and **no `expires_at` column** (ephemerality

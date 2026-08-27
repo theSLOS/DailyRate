@@ -9,11 +9,15 @@ kept anonymous. This is the *why* companion to:
 
 Phases 4.5 (anonymous posting), 4.7/4.8 (friends), and 5 (region feed) are all
 now **built** — the anonymity-strip and personalization-split decisions below
-are the design those were built against, not aspirational. Only Phase 5.5
-(front server + Redis) is still in progress (Concept 1: server skeleton). This
-doc stays regardless — where a decision is settled, the alternatives we
-rejected are recorded alongside it, and that reasoning doesn't stop mattering
-once the code ships.
+are the design those were built against, not aspirational. Phase 5.5 (front
+server + Redis) is well underway: the server skeleton, `feed_shared` RPC,
+`GET /api/feed` with Redis read-through + single-flight caching, and all 14
+personal reads are built and tested; the shared feed's *client-side* wiring
+and every write (post CRUD, likes, comments, blocks, friend requests, rate
+limiting, storage) are still ahead — see `docs/api-gateway-endpoints.md` for
+the live per-endpoint status. This doc stays regardless — where a decision is
+settled, the alternatives we rejected are recorded alongside it, and that
+reasoning doesn't stop mattering once the code ships.
 
 ---
 
