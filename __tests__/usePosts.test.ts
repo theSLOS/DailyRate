@@ -1,13 +1,15 @@
 import { act, waitFor } from '@testing-library/react-native';
 import { useTodayPost, useUpsertPost } from '@/hooks/usePosts';
 import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import type { Post } from '@/types/posts';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
-import { makeQueryChainMock } from './testUtils/supabaseMock';
 
 jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 
 const mockFrom = supabase.from as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 
 // getEntryDate reads the real clock internally — pin "now" so tests control
 // whether it's a live-entry window or the dead zone (12:00-16:00 local).
@@ -46,13 +48,13 @@ describe('useTodayPost', () => {
   it("resolves today's post once the entry window is open", async () => {
     jest.setSystemTime(new Date(2026, 7, 8, 18, 0));
     const post = makePost({});
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: post, error: null }));
+    mockApiGet.mockResolvedValue(post);
 
     const { result } = await renderHookWithQueryClient(() => useTodayPost('user-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(post);
-    expect(mockFrom).toHaveBeenCalledWith('posts');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/me/posts/today?localDate=2026-08-08');
   });
 
   it('short-circuits to no data and no query during the dead zone', async () => {
@@ -61,7 +63,7 @@ describe('useTodayPost', () => {
     const { result } = await renderHookWithQueryClient(() => useTodayPost('user-1'));
 
     expect(result.current.fetchStatus).toBe('idle');
-    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
 });
 

@@ -1,12 +1,11 @@
 import { waitFor } from '@testing-library/react-native';
 import { useProfile } from '@/hooks/useProfile';
-import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
-import { makeQueryChainMock } from './testUtils/supabaseMock';
 
-jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 
-const mockFrom = supabase.from as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -20,17 +19,17 @@ describe('useProfile', () => {
       display_name: 'Sam',
       avatar_url: null,
     };
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: profile, error: null }));
+    mockApiGet.mockResolvedValue(profile);
 
     const { result } = await renderHookWithQueryClient(() => useProfile('user-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(profile);
-    expect(mockFrom).toHaveBeenCalledWith('profiles_public');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/profiles/user-1');
   });
 
   it('resolves null when no profile row exists', async () => {
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: null, error: null }));
+    mockApiGet.mockResolvedValue(null);
 
     const { result } = await renderHookWithQueryClient(() => useProfile('user-1'));
 
@@ -42,6 +41,6 @@ describe('useProfile', () => {
     const { result } = await renderHookWithQueryClient(() => useProfile(undefined));
 
     expect(result.current.fetchStatus).toBe('idle');
-    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
 });

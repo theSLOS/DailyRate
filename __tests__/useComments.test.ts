@@ -1,14 +1,16 @@
 import { act, waitFor } from '@testing-library/react-native';
 import { useComments, useSubmitComment, CommentWithAuthor } from '@/hooks/useComments';
 import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import type { CommentWithReplies } from '@/utils/buildCommentTree';
 import type { FeedPost } from '@/types/posts';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
-import { makeQueryChainMock } from './testUtils/supabaseMock';
 
 jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 
 const mockFrom = supabase.from as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -54,13 +56,13 @@ describe('useComments', () => {
   it('resolves comments joined with author, built into a reply tree', async () => {
     const topLevel = makeComment({ id: 'comment-1', parent_comment_id: null });
     const reply = makeComment({ id: 'comment-2', parent_comment_id: 'comment-1', body: 'agreed' });
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: [topLevel, reply], error: null }));
+    mockApiGet.mockResolvedValue([topLevel, reply]);
 
     const { result } = await renderHookWithQueryClient(() => useComments('post-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([{ ...topLevel, replies: [reply] }]);
-    expect(mockFrom).toHaveBeenCalledWith('comments');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/posts/post-1/comments');
   });
 });
 

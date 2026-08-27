@@ -1,13 +1,12 @@
 import { waitFor } from '@testing-library/react-native';
 import { useLatestLivePost } from '@/hooks/useLatestLivePost';
-import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import type { FeedPost } from '@/types/posts';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
-import { makeQueryChainMock } from './testUtils/supabaseMock';
 
-jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 
-const mockFrom = supabase.from as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -39,17 +38,17 @@ function makeFeedPost(overrides: Partial<FeedPost>): FeedPost {
 describe('useLatestLivePost', () => {
   it("resolves the user's most recent live post", async () => {
     const post = makeFeedPost({ id: 'post-2' });
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: post, error: null }));
+    mockApiGet.mockResolvedValue(post);
 
     const { result } = await renderHookWithQueryClient(() => useLatestLivePost('user-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(post);
-    expect(mockFrom).toHaveBeenCalledWith('posts_feed');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/posts/latest?userId=user-1');
   });
 
   it('resolves null when the user has no live post', async () => {
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: null, error: null }));
+    mockApiGet.mockResolvedValue(null);
 
     const { result } = await renderHookWithQueryClient(() => useLatestLivePost('user-1'));
 
@@ -61,6 +60,6 @@ describe('useLatestLivePost', () => {
     const { result } = await renderHookWithQueryClient(() => useLatestLivePost(undefined));
 
     expect(result.current.fetchStatus).toBe('idle');
-    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
 });

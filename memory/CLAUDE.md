@@ -49,7 +49,7 @@ Implement one concept, verify it in isolation directly against the DB/API (not t
 | 4.7   | Friends (two-way mutual follow) — relationships only                   | complete                                                                    |
 | 4.8   | Friends feed + Friends tab                                             | complete                                                                    |
 | 5     | Filtering & proximity (region-based, not distance-radius — see memory) | complete                                                                    |
-| 5.5   | Front server + Redis caching layer                                     | in progress (server skeleton, `feed_shared` RPC, `GET /api/feed`, and Redis caching complete; client-side wiring not started) |
+| 5.5   | Front server + Redis caching layer                                     | in progress (server skeleton, `feed_shared` RPC, `GET /api/feed` + Redis caching, and all personal-read passthrough + client wiring complete; writes/rate-limiting/storage not started) |
 | 6     | Notifications                                                          | not started                                                                 |
 | 7     | Trust, safety & privacy                                                | not started                                                                 |
 | 8     | Polish & performance                                                   | not started                                                                 |
@@ -63,13 +63,18 @@ Update the status column as phases complete.
 ## Server & caching principles (Phase 5.5 in progress)
 
 A front server (Node/Express) sits between the client and Supabase. The
-server skeleton + JWT-forwarding, the `feed_shared` RPC, and `GET /api/feed`
-are all built, and `GET /api/feed` now reads and writes the Redis cache with
-single-flight dedup on the miss path and its own test coverage
-(`server/tests/feedCache.test.ts`, `server/tests/singleFlight.test.ts`) —
-**Redis caching on the shared feed is fully built and tested.** Nothing on
-the client has been wired to the new server yet — `useExploreFeed` still
-calls Supabase directly. The rest below are standing decisions for the
+server skeleton + JWT-forwarding, the `feed_shared` RPC, `GET /api/feed`
+(read-through + single-flight Redis caching, fully tested), and **all 14
+personal reads** (today's post, history, post detail, latest-live-post,
+like/comment/block status, friends requests/ids/list/count/feed, profile
+lookup, region resolution) are built, tested, and wired into their client
+hooks via a new shared `lib/apiClient.ts`. `cors()` is enabled (wide open,
+dev-only — see `docs/api-gateway-endpoints.md`). **Not yet wired**:
+`useExploreFeed` still calls Supabase directly for the shared feed itself
+(only the server side of that concept is done); every write (post CRUD,
+likes, comments, blocks, friend requests, timezone backfill) still goes
+client → Supabase directly, unchanged, per the full roster in
+`docs/api-gateway-endpoints.md`. The rest below are standing decisions for the
 concepts still to come, so the design doesn't drift mid-phase. Auth and RLS stay entirely Supabase's job; the server forwards the
 user's JWT unmodified
 (`createClient(..., { global: { headers: { Authorization: jwt } } })`) and
@@ -127,6 +132,22 @@ never uses `service_role` for user-facing requests.
 - **One error shape** from the front server (`{ error: { code, message } }`),
   decided up front, not per endpoint.
 - **Structured logging** on the front server: endpoint, user, error.
+- **Two settings deliberately loosened for dev, both flagged to revisit before
+  Phase 9/10 (Beta/Launch), neither a permanent decision**:
+  - `cors()` on the front server is wide open (`Access-Control-Allow-Origin: *`),
+    added when Concept 5's client wiring hit a real CORS block from the Expo
+    web dev server. Low risk today only because auth is a Bearer JWT, never a
+    cookie — no CSRF surface opens up from a permissive origin. Scope it to
+    the real deployed web origin once one exists.
+  - Supabase's dashboard "Rate limit for sign-ups and sign-ins" (Auth → Rate
+    Limits) was raised from the default 30/5min to 200/5min, needed only
+    because the server test suite re-authenticates a small, fixed pool of
+    dummy accounts far more aggressively than any real user traffic ever
+    would. Doesn't affect production risk directly (the front server never
+    calls the token endpoint at all — only the client does, once per real
+    device), but a higher ceiling is a weaker anti-abuse posture regardless;
+    reconsider the number before launch rather than leaving it at the
+    test-suite-driven value indefinitely.
 
 Note: there is no per-minute rate-limit trigger and no `expires_at`/expiry
 delete in this app — ephemerality is the computed 36h RLS window, and the only

@@ -1879,3 +1879,155 @@ all built and verified 2026-08-27 in one session, not yet committed.
   skipped, 63 total** (was 53/53 across 4 files after steps 1–2) — the two
   new files plus the renames account for the difference; no case broke or
   regressed in the process.
+
+---
+
+Phase 5.5 **personal-read passthrough (docs/api-gateway-endpoints.md's
+Concepts 5, 6, and the read halves of 9–10) built 2026-08-27**, same session
+as Concept 4, at the user's explicit request ("write and do all the
+rewiring") — a one-off exception to guide+review for the whole batch, same
+category as prior full-build exceptions. 14 reads across 10 client hooks
+moved from direct `supabase.from()/.rpc()` calls to the front server.
+
+- **Prerequisite infra, discovered necessary mid-build, not planned for up
+  front**:
+  - **`server/src/lib/jwt.ts`** — `uidFromJwt`, promoted from a test-only
+    helper (`tests/helpers/getTestJwt.ts`) to production code. Decodes the
+    `sub` claim without verifying the signature — safe specifically because
+    the id is only ever used to build a `.eq('user_id', ...)` filter on a
+    query that still carries the real JWT, so Postgres/RLS rejects a forged
+    token outright regardless of what this function returns.
+  - **`requireAuth` now also attaches `req.userId: string | undefined`** —
+    decode wrapped in `try/catch`, deliberately **not** rejecting on failure.
+    A malformed token must keep flowing through exactly as before
+    (`meProfile.test.ts` already asserted "malformed token → 502
+    SUPABASE_ERROR from the real query," not a 401 here) — changing that
+    would have been an undiscussed regression to existing, tested behavior.
+    New `requireUserId(req)` helper narrows `string | undefined → string` for
+    the routes that actually need it.
+  - **`lib/apiClient.ts` (client-side)** — the shared fetch wrapper flagged as
+    an open decision back at this concept's kickoff. `apiGet<T>(path)`
+    attaches the session's JWT (`supabase.auth.getSession()`), parses the
+    `{ error: { code, message } }` shape into a new `ApiError` class. Every
+    migrated hook's query error type changed from `PostgrestError` to
+    `ApiError` — checked by grepping the whole `app/` tree for
+    `PostgrestError` imports and `.error.code`/`.message`/`.details` access
+    first; none existed outside plain truthy-error checks, so the type swap
+    was risk-free everywhere it landed.
+  - **`EXPO_PUBLIC_API_URL` added to `.env`/`.env.example`** (`http://localhost:4000`
+    for now; a LAN IP is needed for physical-device testing, not resolved
+    here).
+  - **Five new server route files** (`posts.ts`, `blocks.ts`, `friends.ts`,
+    `profiles.ts`, `region.ts`) mounted in `app.ts`, all behind `requireAuth`.
+    `postsRouter`'s `/latest` is registered **before** `/:id` — Express
+    matches literal segments in registration order, so the reverse order
+    would have `/:id` swallow `/latest` as `id="latest"`.
+  - **8 new test files** (`mePosts`, `postDetail`, `postLikeStatus`,
+    `postComments`, `blockStatus`, `friendsReads`, `friendsFeed`, `profile`,
+    `region` — one file covers two related endpoints in a couple of cases),
+    reusing existing fixture helpers (`createLivePostFromPool`, `restFetch`,
+    `openEntryDate`) rather than duplicating fixture logic a ninth time.
+  - **`buildCommentTree` deliberately stayed client-side, not duplicated
+    server-side.** `GET /api/posts/:id/comments` returns the flat joined rows
+    exactly as Supabase did before; `useComments` still imports the same
+    `utils/buildCommentTree.ts` it always did. Moving the call, not the logic
+    — same principle already applied to `getEntryDate` (Concept 5's
+    `today`/`history` pair) and to device-location permission/GPS reads
+    (`useSessionRegion` — the server has no access to either, so only the
+    `resolve_region` RPC call itself is proxied).
+
+- **A real gap found only by testing through an actual browser, not
+  REST/`supertest`: no CORS configuration existed anywhere on the server.**
+  Every check up to this point (curl, `supertest` in-process, Vitest) bypasses
+  a browser's CORS enforcement entirely, so this was always going to surface
+  the first time a real page tried it — and it did, immediately, on the
+  History tab: `Access to fetch ... has been blocked by CORS policy`. Fixed
+  by adding the `cors` package (flagged as a new dependency at the point of
+  adding it, per the standing "ask before introducing a library" rule, even
+  mid-"just build it" session), wired in `app.ts` right after
+  `requestLogger`. **Wide open (`cors()`, no origin restriction) deliberately,
+  dev-only** — the client sends a Bearer JWT, never a cookie, so there's no
+  CSRF surface a permissive origin opens up; revisit before any real
+  deployment. Confirmed fixed by rereading the browser's own request log:
+  `OPTIONS → 204` with the right `Access-Control-Allow-*` headers, then
+  `GET → 304` (the browser's own ETag conditional-caching kicking in for
+  free, not something built for this).
+  - **A second false alarm during the same diagnosis, worth remembering the
+    shape of**: before the real CORS error was found, a "zero server logs at
+    all" symptom looked like it could mean `EXPO_PUBLIC_API_URL` resolved to
+    `undefined` client-side (untested hypothesis, since `EXPO_PUBLIC_*` vars
+    are inlined at Expo's bundle-build time, not hot-reloaded, and a browser
+    refresh alone doesn't rebuild the bundle). That theory turned out wrong —
+    the URL was correct — but restarting the whole Expo dev process (not just
+    reloading the tab) after adding a new `EXPO_PUBLIC_*` var is still a real,
+    separate requirement worth remembering for next time one is added.
+  - **App-level verified live**: History tab loads real data through the new
+    server path in the actual browser, confirmed by the user pasting the
+    request log directly.
+
+- **A second real, external constraint hit while iterating on the new test
+  files: Supabase Auth's own rate limit on `/auth/v1/token` (password
+  grant).** Running the full server suite twice in quick succession — each
+  file independently calling `loadTestSessions()` for its own `beforeAll`,
+  several needing the *whole* 7-account pool for `createLivePostFromPool`'s
+  fallback walk — tripped `429 over_request_rate_limit` broadly enough that
+  even unrelated, previously-passing files (`anonView`, `feedEndpoint`,
+  `feedSharedRpc`) failed on the second run. **Not a code regression** —
+  confirmed by grepping every failure, all were `getTestJwt` 429s in
+  `beforeAll`, none were assertion failures. This project's test-session
+  pattern (fresh sign-ins per file, no cross-file token cache, since each
+  Vitest test file runs in its own process/pid per the Concept 4 logs) scales
+  fine for a handful of files but genuinely doesn't for a dozen-plus files
+  authenticating the full pool each — worth a real fix (e.g. an on-disk
+  token cache keyed by email, shared across files/processes and reused across
+  runs within a JWT's validity window) if this keeps recurring, not attempted
+  here since it's test infrastructure, not the concept itself.
+  - **Consequence**: the new endpoints are verified two different ways
+    instead of one clean full-suite run — individually (each new test file
+    run on its own, before the rate limit was tripped broadly: real 200s,
+    real cross-account isolation, matching prior conventions) plus the
+    History slice's own live in-browser confirmation above. A full,
+    single-pass "every test file green in one run" confirmation is still
+    outstanding, deferred until the rate-limit window resets.
+  - **User raised the dashboard setting itself** (Authentication → Rate
+    Limits → "Rate limit for sign-ups and sign-ins," the one gating
+    `grant_type=password`, not "token refreshes" which is a different grant
+    type this suite never uses) from the default 30/5min to **200/5min**.
+    **Immediately re-running the suite twice right after made it worse, not
+    better** — a real, worth-remembering lesson: the limiter's existing
+    trailing window doesn't clear just because the ceiling was raised, and
+    retrying immediately only piles more attempts onto an already-strained
+    window. Correct move was to stop and let real wall-clock time pass, not
+    keep retrying — a full clean run is still owed once that's happened.
+  - **Confirmed this doesn't recur in production**: the front server never
+    calls `/auth/v1/token` at all (it only forwards an already-issued JWT);
+    real sign-ins happen client-side, one user/device/IP at a time, nothing
+    like a test suite re-authenticating a 7-account pool from one machine
+    repeatedly. The only real caveat is the generic one any IP-based limiter
+    has — many real users sharing one IP (office/school/NAT) could
+    theoretically collide — not something this architecture causes or can
+    fix.
+
+- **`docs/api-gateway-endpoints.md` updated to match what was actually
+  built**, not just what was originally predicted — Concepts 5 and 6 marked
+  ✅, 9 and 10 marked 🟡 (split cleanly along the same read/write line every
+  other concept already has). Real, deliberate naming deviations from the
+  original roster recorded inline rather than silently overwritten: `today`/
+  `history` moved under `/api/me/` (an id from the JWT, not a client-supplied
+  one, matches the existing `/api/me/profile` convention and isn't
+  self-spoofable); the friends feed landed at `/api/friends/feed` instead of
+  `/api/feed/friends`; `/api/users/:id` became `/api/profiles/:id` (matches
+  the underlying `profiles_public` table); region resolution is `GET` with
+  query params, not the originally-predicted `POST` (a pure read with no
+  side effects doesn't need a body). **Comments caching, predicted in the
+  original roster, deliberately deferred**: a thread genuinely is
+  viewer-identical and cacheable, but `useSubmitComment` still writes
+  directly to Supabase with no way to bust a Redis entry on a new comment —
+  caching now would mean a freshly-posted comment silently missing until the
+  TTL expired. Revisit once comment creation also routes through the server.
+
+**How to apply:** remaining reads in this pass: none — all 14 planned reads
+are done. Remaining before the gateway is complete: the write half of
+Concepts 7–9 (post CRUD, likes/comments/blocks/friend-request mutations,
+`useEnsureTimezone`), rate limiting (Concept 8), and Storage signed URLs
+(Concept 11) — see `docs/api-gateway-endpoints.md` for the live roster.

@@ -1,13 +1,12 @@
 import { waitFor } from '@testing-library/react-native';
 import { usePostHistory } from '@/hooks/usePostHistory';
-import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import type { Post } from '@/types/posts';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
-import { makeQueryChainMock } from './testUtils/supabaseMock';
 
-jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 
-const mockFrom = supabase.from as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -41,20 +40,20 @@ describe('usePostHistory', () => {
       makePost({ id: 'post-2', local_date: '2026-08-08' }),
       makePost({ id: 'post-1', local_date: '2026-08-07' }),
     ];
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: posts, error: null }));
+    mockApiGet.mockResolvedValue(posts);
 
     const { result } = await renderHookWithQueryClient(() => usePostHistory('user-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(posts);
-    expect(mockFrom).toHaveBeenCalledWith('posts');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/me/posts/history');
   });
 
   it('stays disabled with no query when userId is undefined', async () => {
     const { result } = await renderHookWithQueryClient(() => usePostHistory(undefined));
 
     expect(result.current.fetchStatus).toBe('idle');
-    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
 
   // Not exercised here (would need two renderHookWithQueryClient calls sharing

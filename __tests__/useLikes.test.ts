@@ -1,13 +1,19 @@
 import { act, waitFor } from '@testing-library/react-native';
 import { useLikeStatus, useToggleLike } from '@/hooks/useLikes';
 import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import type { FeedPost } from '@/types/posts';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
-import { makeQueryChainMock } from './testUtils/supabaseMock';
 
 jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 
 const mockFrom = supabase.from as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 function makeFeedPost(overrides: Partial<FeedPost>): FeedPost {
   return {
@@ -34,16 +40,17 @@ function makeFeedPost(overrides: Partial<FeedPost>): FeedPost {
 
 describe('useLikeStatus', () => {
   it('resolves true when a like row exists', async () => {
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: { id: 'like-1' }, error: null }));
+    mockApiGet.mockResolvedValue(true);
 
     const { result } = await renderHookWithQueryClient(() => useLikeStatus('post-1', 'user-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBe(true);
+    expect(mockApiGet).toHaveBeenCalledWith('/api/posts/post-1/like');
   });
 
   it('resolves false when no like row exists', async () => {
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: null, error: null }));
+    mockApiGet.mockResolvedValue(false);
 
     const { result } = await renderHookWithQueryClient(() => useLikeStatus('post-1', 'user-1'));
 

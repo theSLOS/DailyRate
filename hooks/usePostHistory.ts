@@ -1,23 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { apiGet, ApiError } from '@/lib/apiClient';
 import type { UseQueryResult } from '@tanstack/react-query';
-import type { PostgrestError } from '@supabase/supabase-js';
 import type { Post } from '@/types/posts';
 import { requireDefined } from '@/utils/requireDefined';
 
-export function usePostHistory(userId: string | undefined): UseQueryResult<Post[], PostgrestError> {
+export function usePostHistory(userId: string | undefined): UseQueryResult<Post[], ApiError> {
   return useQuery({
     queryKey: ['posts', { scope: 'history' }],
     queryFn: async (): Promise<Post[]> => {
-      const id = requireDefined(userId, 'User ID is required');
-      const { data, error } = await supabase
-        .from('posts')
-        .select('*')
-        .eq('user_id', id)
-        .order('local_date', { ascending: false });
-      if (error) throw error;
-
-      return data;
+      requireDefined(userId, 'User ID is required');
+      return apiGet<Post[]>('/api/me/posts/history');
     },
     enabled: !!userId,
   });

@@ -1,12 +1,12 @@
 import { waitFor, act } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFriendsFeed } from '@/hooks/useFriendsFeed';
-import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import type { FeedPost } from '@/types/posts';
 import { FEED_PAGE_SIZE, HIDDEN_POSTS_STORAGE_KEY } from '@/constants/posts';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
 
-jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 // jest.mock's factory can't use a top-level import (hoisting), so require() is
 // the only option here — this is the package's own documented mock.
 jest.mock('@react-native-async-storage/async-storage', () =>
@@ -14,7 +14,7 @@ jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
 
-const mockFrom = supabase.from as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 
 beforeEach(async () => {
   jest.clearAllMocks();
@@ -53,56 +53,41 @@ function makeFullPage(count: number, startHour: number): FeedPost[] {
   );
 }
 
-// Chainable mock for a `.from().select().order().limit()[.lt()]` query that
-// resolves at whichever step the hook stops chaining, mirroring
-// posts_feed_friends' actual query shape (no .eq('user_id', ...) — the view
-// itself scopes to friends, see the hook's own comment).
-function makeInfiniteQueryMock(pagesByCursor: Map<string | undefined, FeedPost[]>): {
-  from: jest.Mock;
-  ltMock: jest.Mock;
-} {
-  let currentPage: FeedPost[] = pagesByCursor.get(undefined) ?? [];
-  const ltMock = jest.fn((_col: string, cursor: string) => {
-    currentPage = pagesByCursor.get(cursor) ?? [];
-    return chain;
+// routes apiGet by the cursor embedded in the query string, mirroring the
+// hook's own `/api/friends/feed` vs `/api/friends/feed?cursor=...` branch
+function mockPagesByCursor(pagesByCursor: Map<string | undefined, FeedPost[]>): jest.Mock {
+  return jest.fn((path: string) => {
+    const match = /[?&]cursor=([^&]+)/.exec(path);
+    const cursor = match ? decodeURIComponent(match[1]) : undefined;
+    return Promise.resolve(pagesByCursor.get(cursor) ?? []);
   });
-  const chain: Record<string, jest.Mock> = {
-    select: jest.fn(() => chain),
-    order: jest.fn(() => chain),
-    limit: jest.fn(() => chain),
-    lt: ltMock,
-    then: jest.fn((onFulfilled: (v: { data: FeedPost[]; error: null }) => unknown) =>
-      Promise.resolve({ data: currentPage, error: null }).then(onFulfilled)
-    ),
-  };
-  return { from: jest.fn(() => chain), ltMock };
 }
 
 describe('useFriendsFeed', () => {
-  it('resolves the first page from posts_feed_friends with no next page when short', async () => {
+  it('resolves the first page from the server with no next page when short', async () => {
     const shortPage = makeFullPage(2, 10);
-    const { from } = makeInfiniteQueryMock(new Map([[undefined, shortPage]]));
-    mockFrom.mockImplementation(from);
+    mockApiGet.mockImplementation(mockPagesByCursor(new Map([[undefined, shortPage]])));
 
     const { result } = await renderHookWithQueryClient(() => useFriendsFeed('user-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.pages[0]).toEqual(shortPage);
     expect(result.current.hasNextPage).toBe(false);
-    expect(mockFrom).toHaveBeenCalledWith('posts_feed_friends');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/friends/feed');
   });
 
   it('paginates by created_at cursor when a page is full', async () => {
     const page1 = makeFullPage(FEED_PAGE_SIZE, 23);
     const page2 = makeFullPage(2, 3);
     const cursor = page1[page1.length - 1].created_at;
-    const { from, ltMock } = makeInfiniteQueryMock(
-      new Map([
-        [undefined, page1],
-        [cursor, page2],
-      ])
+    mockApiGet.mockImplementation(
+      mockPagesByCursor(
+        new Map([
+          [undefined, page1],
+          [cursor, page2],
+        ])
+      )
     );
-    mockFrom.mockImplementation(from);
 
     const { result } = await renderHookWithQueryClient(() => useFriendsFeed('user-1'));
 
@@ -112,7 +97,9 @@ describe('useFriendsFeed', () => {
     await act(() => result.current.fetchNextPage());
 
     await waitFor(() => expect(result.current.data?.pages).toHaveLength(2));
-    expect(ltMock).toHaveBeenCalledWith('created_at', cursor);
+    expect(mockApiGet).toHaveBeenCalledWith(
+      `/api/friends/feed?cursor=${encodeURIComponent(cursor)}`
+    );
     expect(result.current.data?.pages[1]).toEqual(page2);
     expect(result.current.hasNextPage).toBe(false);
   });
@@ -122,8 +109,9 @@ describe('useFriendsFeed', () => {
     const visiblePost = makeFeedPost({ id: 'visible-post', created_at: '2026-08-08T08:00:00Z' });
     await AsyncStorage.setItem(HIDDEN_POSTS_STORAGE_KEY, JSON.stringify(['hidden-post']));
 
-    const { from } = makeInfiniteQueryMock(new Map([[undefined, [hiddenPost, visiblePost]]]));
-    mockFrom.mockImplementation(from);
+    mockApiGet.mockImplementation(
+      mockPagesByCursor(new Map([[undefined, [hiddenPost, visiblePost]]]))
+    );
 
     const { result } = await renderHookWithQueryClient(() => useFriendsFeed('user-1'));
 

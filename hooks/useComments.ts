@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { apiGet, ApiError } from '@/lib/apiClient';
 import type { Comment, FeedPost, ProfilePublicRow } from '@/types/posts';
 import type { UseQueryResult, UseMutationResult } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
@@ -12,19 +13,12 @@ export type CommentWithAuthor = Comment & {
 
 export function useComments(
   postId: string | undefined
-): UseQueryResult<CommentWithReplies[], PostgrestError> {
+): UseQueryResult<CommentWithReplies[], ApiError> {
   return useQuery({
     queryKey: ['comments', { postId }],
     queryFn: async (): Promise<CommentWithReplies[]> => {
       const id = requireDefined(postId, 'Post ID is required');
-      const { data, error } = await supabase
-        .from('comments')
-        .select('*, author:profiles_public(username, display_name, avatar_url)')
-        .eq('post_id', id)
-        .order('created_at', { ascending: true });
-      if (error) {
-        throw error;
-      }
+      const data = await apiGet<CommentWithAuthor[]>(`/api/posts/${id}/comments`);
       return buildCommentTree(data);
     },
     enabled: postId !== undefined,

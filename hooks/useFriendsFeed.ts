@@ -1,6 +1,5 @@
 import { useInfiniteQuery, UseInfiniteQueryResult, InfiniteData } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
-import type { PostgrestError } from '@supabase/supabase-js';
+import { apiGet, ApiError } from '@/lib/apiClient';
 import type { FeedPost } from '@/types/posts';
 import { FEED_PAGE_SIZE, POST_POLL_INTERVAL_MS } from '@/constants/posts';
 import { useHiddenPostsIds } from './useHiddenPosts';
@@ -8,7 +7,7 @@ import { requireDefined } from '@/utils/requireDefined';
 
 export function useFriendsFeed(
   userId: string | undefined
-): UseInfiniteQueryResult<InfiniteData<FeedPost[], string | undefined>, PostgrestError> {
+): UseInfiniteQueryResult<InfiniteData<FeedPost[], string | undefined>, ApiError> {
   const { data: hiddenIds } = useHiddenPostsIds();
 
   return useInfiniteQuery({
@@ -17,18 +16,10 @@ export function useFriendsFeed(
     queryFn: async ({ pageParam: cursor }): Promise<FeedPost[]> => {
       requireDefined(userId, 'User ID is required');
 
-      // the view already restricts to this viewer's friends; no user_id filter here,
-      // which would drop friends' anonymous posts (their user_id is nulled by the view)
-      let query = supabase
-        .from('posts_feed_friends')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(FEED_PAGE_SIZE);
-      if (cursor) query = query.lt('created_at', cursor);
-
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as FeedPost[];
+      const path = cursor
+        ? `/api/friends/feed?cursor=${encodeURIComponent(cursor)}`
+        : '/api/friends/feed';
+      return apiGet<FeedPost[]>(path);
     },
     getNextPageParam: (lastPage) =>
       lastPage.length < FEED_PAGE_SIZE ? undefined : lastPage[lastPage.length - 1].created_at,

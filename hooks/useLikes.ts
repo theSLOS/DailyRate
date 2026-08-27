@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { apiGet, ApiError } from '@/lib/apiClient';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { useQuery } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
@@ -14,25 +15,17 @@ type ToggleLikeContext = {
 export function useLikeStatus(
   postId: string | undefined,
   userId: string | undefined
-): UseQueryResult<boolean, PostgrestError> {
+): UseQueryResult<boolean, ApiError> {
   return useQuery({
     queryKey: ['likes', { postId, userId }],
+    // userId is kept as a param purely for the query key + enabled gate — the
+    // server derives the caller's own id from the JWT, same as before this
+    // moved off a direct `.eq('user_id', userId)` filter
     queryFn: async (): Promise<boolean> => {
       if (!postId || !userId) {
         throw new Error('Post ID and User ID are required');
       }
-      const { data, error } = await supabase
-        .from('likes')
-        .select('id')
-        .eq('post_id', postId)
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (error) {
-        throw error;
-      }
-
-      return data !== null;
+      return apiGet<boolean>(`/api/posts/${postId}/like`);
     },
     enabled: postId !== undefined && userId !== undefined,
   });

@@ -1,7 +1,16 @@
-import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import { useQuery, UseQueryResult } from '@tanstack/react-query';
 import type { RegionResult, Region } from '@/types/region';
 import * as Location from 'expo-location';
+
+// mirrors Database['public']['Functions']['resolve_region']['Returns'][number]
+// exactly, including its (technically wrong — see types/region.ts) non-null
+// state_code, rather than hand-correcting it a second time in a second place
+type ResolveRegionRow = {
+  country_code: string;
+  state_code: string;
+  place_label: string;
+};
 
 export function useSessionRegion(
   userId: string | undefined,
@@ -20,18 +29,14 @@ export function useSessionRegion(
         return { status: 'unavailable', reason: 'permission-denied' };
       }
 
+      // device location stays entirely client-side — the server has no way
+      // to read it — only the resulting RPC call is proxied through it
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Lowest });
 
-      const { data, error } = await supabase.rpc('resolve_region', {
-        lng: pos.coords.longitude,
-        lat: pos.coords.latitude,
-      });
+      const row = await apiGet<ResolveRegionRow | null>(
+        `/api/region?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`
+      );
 
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      const row = data?.[0];
       if (!row) {
         return { status: 'unavailable', reason: 'no-match' };
       }

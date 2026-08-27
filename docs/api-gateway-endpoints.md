@@ -19,9 +19,14 @@ _why_ — see the two documents above.
   `400 INVALID_PARAM` (malformed request), `401 UNAUTHENTICATED` (missing or
   malformed header), `502 SUPABASE_ERROR` (upstream failed), `500
 INTERNAL_ERROR` (unhandled). `429` is reserved for the rate-limited writes.
-- **Paginated reads** return `{ posts, nextCursor }`, keyset on `created_at`.
-  `nextCursor` is `null` on the last page and always `null` for feeds ordered
-  by a mutable key.
+- **Paginated reads**, keyset on `created_at`. **`GET /api/feed`** returns
+  `{ posts, nextCursor }` — `nextCursor` computed server-side, `null` on the
+  last page and always `null` for feeds ordered by a mutable key. **`GET
+  /api/friends/feed`** returns a bare array instead — it's personal and
+  never cached, so there was no cache-key reason to compute the cursor
+  server-side; the client derives its own `nextCursor` from the last row,
+  same as it did calling Supabase directly. Not unified deliberately: fixing
+  now would mean changing a working, tested contract for consistency alone.
 - **Caching** — only results that are _identical for every viewer_ enter Redis.
   Personal reads route through the server as plain passthroughs.
 - **Rate limiting** — exactly three writes, via a Redis counter keyed by
@@ -53,20 +58,20 @@ feed reads from (`supabase/migrations/20260810090952_shared_feed.sql`).
 state → country → most-liked fallback stays client-side; this endpoint maps 1:1
 onto the RPC.
 
-## Concept 4 — Redis 🟡
+## Concept 4 — Redis ✅
 
 No new endpoint. Wraps `GET /api/feed` in a cache keyed by the parsed query.
 Introduces the `redis` dependency.
 
-Five steps; **1–2 built, 3–5 not started** — no endpoint reads the cache yet.
+Five steps, all built and verified.
 
-| Step | What                                                      | Status |
-| ---- | --------------------------------------------------------- | ------ |
-| 1    | Redis container + `lib/redis.ts` (fail-open client)       | ✅     |
-| 2    | `lib/feedCacheKey.ts` + `REGION_REGEX` validation         | ✅     |
-| 3    | Read-through in `routes/feed.ts`, 30s TTL                 | ⬜     |
-| 4    | Single-flight on the miss path                            | ⬜     |
-| 5    | Tests (cache hit, Redis-down fail-open, concurrent misses) | ⬜     |
+| Step | What                                                       | Status |
+| ---- | ----------------------------------------------------------- | ------ |
+| 1    | Redis container + `lib/redis.ts` (fail-open client)          | ✅     |
+| 2    | `lib/feedCacheKey.ts` + `REGION_REGEX` validation             | ✅     |
+| 3    | Read-through in `routes/feed.ts`, 30s TTL                     | ✅     |
+| 4    | Single-flight on the miss path (`lib/singleFlight.ts`)        | ✅     |
+| 5    | Tests (`feedCache.test.ts`, `singleFlight.test.ts`)           | ✅     |
 
 The cache is **optional infrastructure**: `connectRedis` is unawaited, every
 read and write is gated on `isReady`, and any failure collapses to a miss, so
@@ -77,22 +82,39 @@ the gateway serves normally with Redis stopped.
 has no RLS — a cache consulted before authentication would serve a signed-in
 user's blob to an anonymous caller.
 
-## Concept 5 — personal post reads ⬜
+## Concept 5 — personal post reads ✅
 
 | Status | Endpoint                         | Replaces            | Cache                                                             |
 | ------ | -------------------------------- | ------------------- | ----------------------------------------------------------------- |
-| ⬜     | `GET /api/posts/today`           | `useTodayPost`      | none                                                              |
-| ⬜     | `GET /api/posts/history`         | `usePostHistory`    | none                                                              |
-| ⬜     | `GET /api/posts/:id`             | `usePost`           | none                                                              |
-| ⬜     | `GET /api/users/:id/latest-post` | `useLatestLivePost` | none                                                              |
-| ⬜     | `GET /api/feed/friends`          | `useFriendsFeed`    | **never** — personal, and exempt from the personalization ceiling |
+| ✅     | `GET /api/me/posts/today?localDate=` | `useTodayPost`  | none                                                              |
+| ✅     | `GET /api/me/posts/history`      | `usePostHistory`    | none                                                              |
+| ✅     | `GET /api/posts/:id`             | `usePost`           | none                                                              |
+| ✅     | `GET /api/posts/latest?userId=`  | `useLatestLivePost` | none                                                              |
+| ✅     | `GET /api/friends/feed?cursor=`  | `useFriendsFeed`    | **never** — personal, and exempt from the personalization ceiling |
 
-## Concept 6 — engagement reads ⬜
+Endpoint names deviate from the original prediction in two places, both
+deliberate: `today`/`history` moved under `/api/me/` (matching the existing
+`/api/me/profile` "my own resource, id from the JWT" convention — a
+client-supplied id here would just be self-spoofing waiting to happen, so
+deriving it server-side is the correct shape) instead of a bare
+`/api/posts/`; the friends feed landed at `/api/friends/feed` rather than
+`/api/feed/friends`, grouping it with the rest of `/api/friends/*` instead of
+the shared-feed family it has nothing else in common with.
+
+## Concept 6 — engagement reads ✅
 
 | Status | Endpoint                      | Replaces        | Cache                                              |
 | ------ | ----------------------------- | --------------- | -------------------------------------------------- |
-| ⬜     | `GET /api/posts/:id/like`     | `useLikeStatus` | none — per-viewer                                  |
-| ⬜     | `GET /api/posts/:id/comments` | `useComments`   | **Redis** — a thread is identical for every viewer |
+| ✅     | `GET /api/posts/:id/like`     | `useLikeStatus` | none — per-viewer; id comes from the JWT, not a param |
+| ✅     | `GET /api/posts/:id/comments` | `useComments`   | **deliberately not yet** — see below               |
+
+**Comments caching deferred, not dropped.** A thread genuinely is identical
+for every viewer (no anonymity strip the way posts get one), so it's still a
+valid Redis candidate — but `useSubmitComment` (Concept 7/8) still writes
+straight to Supabase, with no server-side hook to bust a Redis entry when a
+new comment lands. Caching now would mean a freshly-posted comment silently
+missing from the thread for up to the TTL. Revisit once comment creation
+also routes through the server and can invalidate the key it just wrote to.
 
 ## Concept 7 — post + engagement writes ⬜
 
@@ -111,31 +133,47 @@ user's blob to an anonymous caller.
 
 Thresholds are still undecided.
 
-## Concept 9 — safety + friends ⬜
+## Concept 9 — safety + friends 🟡
+
+Reads built; the four writes (block toggle, send/delete request, accept,
+remove) still go straight to Supabase — this concept turned out to split
+cleanly along the same read/write line every other concept has, so it's
+tracked that way rather than forcing one status onto both halves.
 
 | Status | Endpoint                               | Replaces                                       |
 | ------ | -------------------------------------- | ---------------------------------------------- |
-| ⬜     | `GET /api/blocks/:userId`              | `useBlockStatus`                               |
+| ✅     | `GET /api/blocks/:userId/status`       | `useBlockStatus`                               |
 | ⬜     | `POST` / `DELETE /api/blocks`          | `useToggleBlock`                               |
-| ⬜     | `GET /api/friends`                     | `useFriendIds`                                 |
-| ⬜     | `GET /api/friend-requests`             | `useFriendRequests`                            |
+| ✅     | `GET /api/friends/ids`                 | `useFriendsIds`                                |
+| ✅     | `GET /api/friends/list`                | `useFriendsList`                               |
+| ✅     | `GET /api/friends/requests`            | `useFriendRequests`                            |
 | ⬜     | `POST /api/friend-requests`            | `useSendFriendRequest`                         |
 | ⬜     | `DELETE /api/friend-requests/:id`      | `useDeleteFriendRequest` (reject _and_ cancel) |
 | ⬜     | `POST /api/friend-requests/:id/accept` | `accept_friend_request` RPC                    |
 | ⬜     | `DELETE /api/friends/:id`              | `remove_friendship` RPC                        |
-| ⬜     | `GET /api/users/:id/friend-count`      | `friend_count` RPC                             |
+| ✅     | `GET /api/friends/count?userId=`       | `useFriendCount` (`friend_count` RPC)          |
 
 Standing rule carried over from `docs/database-architecture.md` §7: **never map
 `friend_count` over a list** — that is an N+1 of round trips and the trigger to
 denormalize instead.
 
-## Concept 10 — profiles + region ⬜
+## Concept 10 — profiles + region 🟡
+
+Both reads (`useProfile`, `useSessionRegion`) are built; the timezone-backfill
+write is untouched (it's a write, out of scope for this pass). The region
+endpoint's method diverges from the original prediction — see below.
 
 | Status | Endpoint                   | Replaces                                  |
 | ------ | -------------------------- | ----------------------------------------- |
-| ⬜     | `GET /api/users/:id`       | `useProfile`                              |
+| ✅     | `GET /api/profiles/:id`    | `useProfile`                              |
 | ⬜     | `PATCH /api/me/profile`    | `useEnsureTimezone` (timezone backfill)   |
-| ⬜     | `POST /api/region/resolve` | `useSessionRegion` → `resolve_region` RPC |
+| ✅     | `GET /api/region?lat=&lng=` | `useSessionRegion` → `resolve_region` RPC |
+
+`GET`, not `POST` — this call is a pure read with no side effects (coordinates
+in, a region row or none out), so it fits the same query-param shape as every
+other parameterized read in this roster instead of needing a request body.
+Permission + GPS reads stay entirely client-side either way; only the RPC
+call itself is proxied.
 
 ## Concept 11 — storage ⬜
 

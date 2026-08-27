@@ -1,12 +1,14 @@
 import { act, waitFor } from '@testing-library/react-native';
 import { useBlockStatus, useToggleBlock } from '@/hooks/useBlocks';
 import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
-import { makeQueryChainMock } from './testUtils/supabaseMock';
 
 jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 
 const mockFrom = supabase.from as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -14,19 +16,17 @@ beforeEach(() => {
 
 describe('useBlockStatus', () => {
   it('resolves true when a block row exists', async () => {
-    mockFrom.mockReturnValue(
-      makeQueryChainMock({ data: { blocker_id: 'a', blocked_id: 'b' }, error: null })
-    );
+    mockApiGet.mockResolvedValue(true);
 
     const { result } = await renderHookWithQueryClient(() => useBlockStatus('b'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBe(true);
-    expect(mockFrom).toHaveBeenCalledWith('blocks');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/blocks/b/status');
   });
 
   it('resolves false when no block row exists', async () => {
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: null, error: null }));
+    mockApiGet.mockResolvedValue(false);
 
     const { result } = await renderHookWithQueryClient(() => useBlockStatus('b'));
 

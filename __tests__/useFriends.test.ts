@@ -11,13 +11,15 @@ import {
   useRemoveFriendship,
 } from '@/hooks/useFriends';
 import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
-import { makeQueryChainMock } from './testUtils/supabaseMock';
 
 jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn(), rpc: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 
 const mockFrom = supabase.from as jest.Mock;
 const mockRpc = supabase.rpc as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -40,57 +42,56 @@ async function flushPendingQueries(): Promise<void> {
 describe('useFriendRequests', () => {
   it('resolves requests with joined requester/addressee profiles', async () => {
     const requests = [{ requester_id: 'a', addressee_id: 'b', created_at: '2026-08-01' }];
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: requests, error: null }));
+    mockApiGet.mockResolvedValue(requests);
 
     const { result } = await renderHookWithQueryClient(() => useFriendRequests('a'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(requests);
-    expect(mockFrom).toHaveBeenCalledWith('friend_requests');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/friends/requests');
   });
 });
 
 describe('useFriendsIds', () => {
-  it('resolves a Set built from friend_id rows', async () => {
-    mockFrom.mockReturnValue(
-      makeQueryChainMock({ data: [{ friend_id: 'b' }, { friend_id: 'c' }], error: null })
-    );
+  it('resolves a Set built from a flat array of ids', async () => {
+    mockApiGet.mockResolvedValue(['b', 'c']);
 
     const { result } = await renderHookWithQueryClient(() => useFriendsIds('a'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(new Set(['b', 'c']));
+    expect(mockApiGet).toHaveBeenCalledWith('/api/friends/ids');
   });
 });
 
 describe('useFriendsList', () => {
   it('resolves friendships with the joined friend profile', async () => {
     const friendships = [{ user_id: 'a', friend_id: 'b', friend: { id: 'b', username: 'bee' } }];
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: friendships, error: null }));
+    mockApiGet.mockResolvedValue(friendships);
 
     const { result } = await renderHookWithQueryClient(() => useFriendsList('a'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(friendships);
-    expect(mockFrom).toHaveBeenCalledWith('friendships');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/friends/list');
   });
 });
 
 describe('useFriendCount', () => {
-  it('resolves the count via the friend_count RPC', async () => {
-    mockRpc.mockReturnValue(Promise.resolve({ data: 3, error: null }));
+  it('resolves the count from the server', async () => {
+    mockApiGet.mockResolvedValue(3);
 
     const { result } = await renderHookWithQueryClient(() => useFriendCount('a'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBe(3);
-    expect(mockRpc).toHaveBeenCalledWith('friend_count', { target_user_id: 'a' });
+    expect(mockApiGet).toHaveBeenCalledWith('/api/friends/count?userId=a');
   });
 });
 
 // useFriendStatus composes useFriendRequests + useFriendsIds + useBlockStatus
-// (three separate Supabase calls) into one derived status. Route mockFrom by
-// table name so all three sub-hooks resolve in a single render.
+// (three separate server calls) into one derived status. Route mockApiGet by
+// path so all three sub-hooks resolve in a single render.
 function mockFriendStatusData(options: {
   requests?: { requester_id: string; addressee_id: string }[];
   friendIds?: string[];
@@ -100,18 +101,11 @@ function mockFriendStatusData(options: {
   const friendIds = options.friendIds ?? [];
   const blocked = options.blocked ?? false;
 
-  mockFrom.mockImplementation((table: string) => {
-    if (table === 'friend_requests') return makeQueryChainMock({ data: requests, error: null });
-    if (table === 'friendships') {
-      return makeQueryChainMock({ data: friendIds.map((id) => ({ friend_id: id })), error: null });
-    }
-    if (table === 'blocks') {
-      return makeQueryChainMock({
-        data: blocked ? { blocker_id: 'a', blocked_id: 'other' } : null,
-        error: null,
-      });
-    }
-    throw new Error(`Unexpected table: ${table}`);
+  mockApiGet.mockImplementation((path: string) => {
+    if (path === '/api/friends/requests') return Promise.resolve(requests);
+    if (path === '/api/friends/ids') return Promise.resolve(friendIds);
+    if (path.startsWith('/api/blocks/')) return Promise.resolve(blocked);
+    throw new Error(`Unexpected path: ${path}`);
   });
 }
 
@@ -123,7 +117,9 @@ describe('useFriendStatus', () => {
     // sessionUserId is undefined so useFriendRequests/useFriendsIds never
     // fire, but otherUserId is defined so useBlockStatus does — flush it to
     // completion before the test ends (see flushPendingQueries above).
-    await waitFor(() => expect(mockFrom).toHaveBeenCalledWith('blocks'));
+    await waitFor(() =>
+      expect(mockApiGet).toHaveBeenCalledWith(expect.stringContaining('/api/blocks/'))
+    );
     await flushPendingQueries();
     expect(result.current).toBe('unknown');
   });
@@ -136,7 +132,9 @@ describe('useFriendStatus', () => {
     // sub-hooks still fire in the background (both ids are defined) — flush
     // them to completion before the test ends, same reason as 'unknown'
     // above.
-    await waitFor(() => expect(mockFrom).toHaveBeenCalledWith('blocks'));
+    await waitFor(() =>
+      expect(mockApiGet).toHaveBeenCalledWith(expect.stringContaining('/api/blocks/'))
+    );
     await flushPendingQueries();
     expect(result.current).toBe('self');
   });

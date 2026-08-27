@@ -6,6 +6,7 @@ import {
   UseQueryResult,
 } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { apiGet, ApiError } from '@/lib/apiClient';
 import type { PostgrestError } from '@supabase/supabase-js';
 
 import { useBlockStatus } from '@/hooks/useBlocks';
@@ -24,21 +25,12 @@ export type FriendshipWithProfile = Friendship & {
 
 export function useFriendRequests(
   sessionUserId: string | undefined
-): UseQueryResult<FriendRequestWithProfiles[], PostgrestError> {
+): UseQueryResult<FriendRequestWithProfiles[], ApiError> {
   return useQuery({
     queryKey: ['friendRequests', { sessionUserId }],
     queryFn: async (): Promise<FriendRequestWithProfiles[]> => {
       requireDefined(sessionUserId, 'Session User ID needed');
-      const { data, error } = await supabase
-        .from('friend_requests')
-        .select(
-          '*, requester:profiles_public!friend_requests_requester_id_fkey(id, username, display_name, avatar_url), addressee:profiles_public!friend_requests_addressee_id_fkey(id, username, display_name, avatar_url)'
-        )
-        .order('created_at', { ascending: false });
-      if (error) {
-        throw error;
-      }
-      return data;
+      return apiGet<FriendRequestWithProfiles[]>('/api/friends/requests');
     },
     enabled: sessionUserId !== undefined,
   });
@@ -46,16 +38,13 @@ export function useFriendRequests(
 
 export function useFriendsIds(
   sessionUserId: string | undefined
-): UseQueryResult<Set<string>, PostgrestError> {
+): UseQueryResult<Set<string>, ApiError> {
   return useQuery({
     queryKey: ['friends', { scope: 'mine', shape: 'ids', sessionUserId }],
     queryFn: async (): Promise<Set<string>> => {
       requireDefined(sessionUserId, 'Session User ID needed');
-      const { data, error } = await supabase.from('friendships').select('friend_id');
-      if (error) {
-        throw error;
-      }
-      return new Set(data.map((row) => row.friend_id));
+      const ids = await apiGet<string[]>('/api/friends/ids');
+      return new Set(ids);
     },
     enabled: sessionUserId !== undefined,
   });
@@ -63,36 +52,23 @@ export function useFriendsIds(
 
 export function useFriendsList(
   sessionUserId: string | undefined
-): UseQueryResult<FriendshipWithProfile[], PostgrestError> {
+): UseQueryResult<FriendshipWithProfile[], ApiError> {
   return useQuery({
     queryKey: ['friends', { scope: 'mine', shape: 'list', sessionUserId }],
     queryFn: async (): Promise<FriendshipWithProfile[]> => {
       requireDefined(sessionUserId, 'Session User ID needed');
-      const { data, error } = await supabase
-        .from('friendships')
-        .select(
-          '*, friend:profiles_public!friendships_friend_id_fkey(id, username, display_name, avatar_url)'
-        )
-        .order('created_at', { ascending: false });
-      if (error) {
-        throw error;
-      }
-      return data;
+      return apiGet<FriendshipWithProfile[]>('/api/friends/list');
     },
     enabled: sessionUserId !== undefined,
   });
 }
 
-export function useFriendCount(userId: string | undefined): UseQueryResult<number, PostgrestError> {
+export function useFriendCount(userId: string | undefined): UseQueryResult<number, ApiError> {
   return useQuery({
     queryKey: ['friends', { count: userId }],
     queryFn: async (): Promise<number> => {
       const id = requireDefined(userId, 'User ID needed');
-      const { data, error } = await supabase.rpc('friend_count', { target_user_id: id });
-      if (error) {
-        throw error;
-      }
-      return data;
+      return apiGet<number>(`/api/friends/count?userId=${id}`);
     },
     enabled: userId !== undefined,
   });

@@ -1,13 +1,12 @@
 import { waitFor } from '@testing-library/react-native';
 import { usePost } from '@/hooks/usePost';
-import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import type { FeedPost } from '@/types/posts';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
-import { makeQueryChainMock } from './testUtils/supabaseMock';
 
-jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 
-const mockFrom = supabase.from as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -37,19 +36,19 @@ function makeFeedPost(overrides: Partial<FeedPost>): FeedPost {
 }
 
 describe('usePost', () => {
-  it('resolves a single post from posts_feed by id', async () => {
+  it('resolves a single post from the server by id', async () => {
     const post = makeFeedPost({ id: 'post-1' });
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: post, error: null }));
+    mockApiGet.mockResolvedValue(post);
 
     const { result } = await renderHookWithQueryClient(() => usePost('post-1'));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(post);
-    expect(mockFrom).toHaveBeenCalledWith('posts_feed');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/posts/post-1');
   });
 
   it('resolves null when the post does not exist (or has aged out)', async () => {
-    mockFrom.mockReturnValue(makeQueryChainMock({ data: null, error: null }));
+    mockApiGet.mockResolvedValue(null);
 
     const { result } = await renderHookWithQueryClient(() => usePost('missing-post'));
 
@@ -61,6 +60,6 @@ describe('usePost', () => {
     const { result } = await renderHookWithQueryClient(() => usePost(undefined));
 
     expect(result.current.fetchStatus).toBe('idle');
-    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
 });

@@ -1,17 +1,17 @@
 import { waitFor } from '@testing-library/react-native';
 import * as Location from 'expo-location';
 import { useSessionRegion } from '@/hooks/useSessionRegion';
-import { supabase } from '@/lib/supabase';
+import { apiGet } from '@/lib/apiClient';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
 
-jest.mock('@/lib/supabase', () => ({ supabase: { rpc: jest.fn() } }));
+jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
   Accuracy: { Lowest: 1 },
 }));
 
-const mockRpc = supabase.rpc as jest.Mock;
+const mockApiGet = apiGet as jest.Mock;
 const mockRequestPermission = Location.requestForegroundPermissionsAsync as jest.Mock;
 const mockGetPosition = Location.getCurrentPositionAsync as jest.Mock;
 
@@ -30,10 +30,10 @@ describe('useSessionRegion', () => {
     expect(mockGetPosition).not.toHaveBeenCalled();
   });
 
-  it('resolves unavailable/no-match when resolve_region returns zero rows', async () => {
+  it('resolves unavailable/no-match when the server finds no match', async () => {
     mockRequestPermission.mockResolvedValue({ status: 'granted' });
     mockGetPosition.mockResolvedValue({ coords: { longitude: -150, latitude: 0 } });
-    mockRpc.mockResolvedValue({ data: [], error: null });
+    mockApiGet.mockResolvedValue(null);
 
     const { result } = await renderHookWithQueryClient(() => useSessionRegion('user-1'));
 
@@ -44,11 +44,10 @@ describe('useSessionRegion', () => {
   it('resolves a region and maps snake_case columns to camelCase', async () => {
     mockRequestPermission.mockResolvedValue({ status: 'granted' });
     mockGetPosition.mockResolvedValue({ coords: { longitude: 151.2, latitude: -33.8 } });
-    mockRpc.mockResolvedValue({
-      data: [
-        { country_code: 'AU', state_code: 'AU-NSW', place_label: 'New South Wales, Australia' },
-      ],
-      error: null,
+    mockApiGet.mockResolvedValue({
+      country_code: 'AU',
+      state_code: 'AU-NSW',
+      place_label: 'New South Wales, Australia',
     });
 
     const { result } = await renderHookWithQueryClient(() => useSessionRegion('user-1'));
@@ -58,13 +57,13 @@ describe('useSessionRegion', () => {
       status: 'resolved',
       region: { countryCode: 'AU', stateCode: 'AU-NSW', placeLabel: 'New South Wales, Australia' },
     });
-    expect(mockRpc).toHaveBeenCalledWith('resolve_region', { lng: 151.2, lat: -33.8 });
+    expect(mockApiGet).toHaveBeenCalledWith('/api/region?lat=-33.8&lng=151.2');
   });
 
-  it('wraps an RPC error as a plain Error', async () => {
+  it('surfaces a server error as a plain Error', async () => {
     mockRequestPermission.mockResolvedValue({ status: 'granted' });
     mockGetPosition.mockResolvedValue({ coords: { longitude: 0, latitude: 0 } });
-    mockRpc.mockResolvedValue({ data: null, error: { message: 'boom' } });
+    mockApiGet.mockRejectedValue(new Error('boom'));
 
     const { result } = await renderHookWithQueryClient(() => useSessionRegion('user-1'));
 
