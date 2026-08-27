@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import { getTestJwt, uidFromJwt } from './getTestJwt.js';
+import { getCachedToken, cacheToken } from './jwtCache.js';
 
 export type TestAccount = { email: string; password: string };
 export type TestSession = TestAccount & { jwt: string; userId: string };
@@ -33,14 +34,26 @@ export function testAccounts(count: number): TestAccount[] {
   return all.slice(0, count);
 }
 
-// one round trip per account, run in parallel — a suite that needs the whole
-// pool shouldn't pay for it serially
+// checks the on-disk cache before ever hitting Supabase Auth — real sign-ins
+// are what tripped the "sign-ups and sign-ins" rate limit, since every test
+// file re-authenticates its own sessions with no cache shared between them
+async function getJwt(email: string, password: string): Promise<string> {
+  const cached = getCachedToken(email);
+  if (cached) return cached;
+
+  const { accessToken, expiresAt } = await getTestJwt(email, password);
+  cacheToken(email, accessToken, expiresAt);
+  return accessToken;
+}
+
+// one round trip per account (cache misses only), run in parallel — a suite
+// that needs the whole pool shouldn't pay for it serially
 export async function loadTestSessions(count?: number): Promise<TestSession[]> {
   const accounts = count === undefined ? loadTestAccounts() : testAccounts(count);
 
   return Promise.all(
     accounts.map(async (account) => {
-      const jwt = await getTestJwt(account.email, account.password);
+      const jwt = await getJwt(account.email, account.password);
       return { ...account, jwt, userId: uidFromJwt(jwt) };
     })
   );

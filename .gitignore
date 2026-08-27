@@ -34,6 +34,10 @@ yarn-error.*
 .env
 .env*.local
 
+# cached test-account session tokens (server/tests/helpers/jwtCache.ts) — live
+# credentials-adjacent artifacts, never committed, same tier as .env*.local
+.jwt-cache.local.json
+
 # typescript
 *.tsbuildinfo
 
