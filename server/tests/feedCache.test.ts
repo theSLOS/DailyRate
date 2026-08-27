@@ -58,7 +58,10 @@ describe('GET /api/feed — Redis caching', () => {
   });
 
   afterAll(async () => {
-    await inspector.quit();
+    // guards against beforeAll throwing before inspector was assigned (e.g.
+    // Redis genuinely down) — without this, that real failure gets masked by
+    // a confusing second one here instead of failing once, clearly
+    if (inspector) await inspector.quit();
   });
 
   // every test starts from a cold cache — otherwise a "miss" test could pass
