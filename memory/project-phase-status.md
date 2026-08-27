@@ -1240,7 +1240,7 @@ doesn't have a Vitest equivalent, and Vitest has no real React Native support:
   was split into `app.ts` (`createApp()` — the configured Express app, no
   `listen()`) + a thin `index.ts` (imports `createApp`, calls `.listen`) —
   needed so tests can exercise the real app object via `supertest` without
-  binding a real port. First real test: `concept1.test.ts`, a direct
+  binding a real port. First real test: `meProfile.test.ts`, a direct
   automated translation of the manual curl verification already run for
   Concept 1 (no-header → 401, garbage token → 502, and **the cross-user
   isolation check** — two real accounts' JWTs, same `createApp()` instance,
@@ -1323,7 +1323,7 @@ deferred, not forgotten.
 - **Concept 2 (the shared-feed RPC) built + verified 2026-08-10.** Written up
   retroactively on 2026-08-20 — this entry was missing entirely for ten days,
   so the file claimed "next is Concept 2" while Concept 2 was shipped and
-  tested. Reconstructed from the migrations, `concept2.test.ts` and commits
+  tested. Reconstructed from the migrations, `feedSharedRpc.test.ts` and commits
   `27ec37a`, `e768ec6`, `a0db593`, `04519c8`, `a3c4af3`.
   - **Migration `20260810090952_shared_feed.sql`** — `feed_shared(variant text,
     region_code text, cursor_ts timestamptz, page_size int) returns setof
@@ -1347,7 +1347,7 @@ deferred, not forgotten.
     allow. Accepted consequence recorded in the migration itself: `likes` and
     `comments` cascade on delete, and polymorphic `reports` rows are left
     orphaned (revisit in Phase 7 if delete ever widens beyond the window).
-  - **`server/tests/concept2.test.ts`** covers the invariants rather than the
+  - **`server/tests/feedSharedRpc.test.ts`** covers the invariants rather than the
     happy path: identical rows to two viewers (the property the whole cache
     design rests on), own expired posts excluded (proving the owner bypass is
     really gone), 36h and approved-only, the anonymity strip **hiding the
@@ -1375,7 +1375,7 @@ deferred, not forgotten.
     `FeedVariant`, `ParsedFeedQuery`, `FeedResponse`),
     `server/src/lib/parseFeedQuery.ts` (all the judgement lives here),
     `server/src/routes/feed.ts` (~15 lines of composition), the mount in
-    `app.ts`, plus `server/tests/concept3.test.ts` and
+    `app.ts`, plus `server/tests/feedEndpoint.test.ts` and
     `server/tests/helpers/fixtures.ts`.
   - **The wire vocabulary is the RPC's four variants (`newest | most_liked |
     state | country`), not the client's `ExploreFeedType`.** The client's
@@ -1502,7 +1502,7 @@ deferred, not forgotten.
     read as safety; nothing was inside the 36h window. It was only found by
     *first inserting a live post*, then querying as anon. Any "X cannot see Y"
     check must prove Y is visible to someone before asserting anyone's blindness
-    — the same guard `concept3.test.ts` already applies with
+    — the same guard `feedEndpoint.test.ts` already applies with
     `expect(posts.length).toBeGreaterThan(0)`.
   - **`server/tests/anonView.test.ts` (new, 18 tests)** locks it: creates a live
     post plus a cross-account comment and like, proves an authenticated viewer
@@ -1567,9 +1567,10 @@ credentials fresh; they cannot be recovered from git history or this file.
 
 ---
 
-Phase 5.5 **Concept 4 (Redis caching on the shared feed) started 2026-08-20**.
-Split into five steps; **steps 1–2 are built, verified and committed
-(`69c5195`), steps 3–5 are not started**. No endpoint reads the cache yet.
+Phase 5.5 **Concept 4 (Redis caching on the shared feed) — COMPLETE as of
+2026-08-27**. Split into five steps; steps 1–2 built and committed
+(`69c5195`) earlier; steps 3 (read-through), 4 (single-flight), and 5 (tests)
+all built and verified 2026-08-27 in one session, not yet committed.
 
 - **Four decisions settled before any code**: the `redis` package (node-redis,
   `^6.2.1`) over `ioredis`; a Docker Desktop container rather than WSL/Memurai/
@@ -1692,27 +1693,189 @@ Split into five steps; **steps 1–2 are built, verified and committed
     invisible to `tsc` (`noUnusedLocals` does not flag unused *exports*). Grep
     the identifier right after extracting it.
 
-- **Steps 3–5 still to do**: (3) read-through in `routes/feed.ts` —
-  `FEED_CACHE_TTL_SECONDS = 30`, `getCache` before the RPC, `setCache` of the
-  **whole `{ posts, nextCursor }` envelope** (not just `posts`, so the keyset
-  rule stays in one place), hit/miss logging; (4) **single-flight** on the miss
-  path; (5) tests.
+- **Step 3 — read-through caching in `routes/feed.ts`, built + verified
+  2026-08-27.** `FEED_CACHE_TTL_SECONDS = 30` landed in `constants/redis.ts`
+  next to `FEED_KEY_PREFIX` (kept the two feed-cache constants in one file
+  rather than splitting across `constants/redis.ts` and `constants/feed.ts`).
+  `getCache<FeedResponse>(key)` runs before the RPC; a hit logs and returns
+  immediately, touching Supabase not at all. On a miss the **whole
+  `{ posts, nextCursor }` envelope** is cached, not just `posts` — so the
+  keyset-pagination rule stays computed in exactly one place and a cached page
+  can never disagree with its own cursor.
+  - **Hard constraint, confirmed still true**: the cache lookup sits **behind
+    `requireAuth`** (`app.ts`'s `app.use('/api/feed', requireAuth, feedRouter)`
+    already wraps the whole router) — `feed_shared` carries the
+    `auth.uid() is null` guard from `20260820080000`, and Redis has no RLS, so
+    a cache consulted before authentication would hand a signed-in user's blob
+    to an anonymous caller, reopening exactly what that migration closed.
+  - **Bug parade while landing this step, two rounds**: the first draft kept
+    the old pre-cache `res.json(...)` call *and* added the new cache-writing
+    tail after it — two `res.json()` calls on every miss, the second of which
+    throws `ERR_HTTP_HEADERS_SENT` once headers are already sent. In Express 4
+    that would've been an unhandled promise rejection (fatal, since nothing
+    awaits an async route handler); this server runs **Express 5**, which
+    auto-forwards a rejected handler's promise to `next(err)`, so the actual
+    failure mode here is milder (routed to `errorHandler`, not a hard crash)
+    but the duplicate response was still wrong. The second attempt at fixing
+    it introduced a *second* `const response` in the same scope (redeclaration
+    error) initialized to `{}`, which also failed to satisfy `FeedResponse`
+    (missing `posts`/`nextCursor`) — both caught by `tsc --noEmit`, neither by
+    inspection. Landed clean on the third pass: one `const response: FeedResponse
+    = {...}`, built once, `setCache`d, then a single `res.json(response)`.
+  - **Verified directly against the running local server + `redis-cli`** (not
+    simulation): first request for `?variant=newest` created
+    `feed|newest|~|~|20` at TTL 29; two more requests to the same params showed
+    the TTL falling on its own schedule (29 → 14 → 8) rather than resetting —
+    proof those requests were served from Redis without re-invoking `setCache`;
+    `?variant=newest&limit=5` created an independent second key; letting the
+    original key's TTL run out to `-2` (gone) and re-requesting recreated it
+    fresh at TTL 30, proving genuine re-miss on expiry.
+  - **Real finding surfaced while setting up this verification**: the live
+    feed was completely empty system-wide — `feed_shared` returned `[]`, and
+    the newest row in the whole `posts` table was three weeks old
+    (2026-08-08). Initially suspected as an entry-window timing issue; it
+    wasn't — **the entry window only gates post *creation*, the 36h rule
+    (independent of time-of-day) gates feed *visibility***, and nobody had
+    posted in weeks, so both were moot. Verification proceeded anyway on the
+    empty-but-valid `{ posts: [], nextCursor: null }` payload, since Redis's
+    hit/miss/TTL behavior doesn't depend on payload content — confirmed
+    deliberately as a scoping call rather than blocking Step 3 on fresh dummy
+    posts.
+
+- **Step 4 — single-flight, built + verified 2026-08-27.** New
+  `server/src/lib/singleFlight.ts`: a module-level `Map<string,
+  Promise<unknown>>` (`inFlight`), keyed identically to the feed cache key, and
+  one generic `singleFlight<T>(key, fn): Promise<{ value: T; joined: boolean
+  }>`. A request whose key is already in the map **joins** the existing
+  promise; the first request for a cold key becomes the **leader** — it
+  registers its own promise in the map synchronously (no `await` gap, so no
+  concurrent request can slip past the check) before calling `fn()`, and
+  removes the entry in **`.finally`, not `.then`**, so a failed fetch frees the
+  key for the next attempt instead of poisoning it forever.
   - **Single-flight came from the user's own question** — "a harsher rate
     limiter per person while Redis is down?" The instinct was right, the tool
     wrong: the rate limiter *is* Redis (`memory/CLAUDE.md`'s stateless rule
     forbids in-memory counters, and three instances would give 3× the intended
     limit). What is actually at risk when the cache dies is Postgres, not
     fairness — that is a **cache stampede**, and the fix is deduplication, not
-    throttling. Single-flight (`Map<string, Promise<T>>`, keyed the same as the
-    cache) needs no shared state, so it is *correct* per-instance rather than
-    merely tolerable. Two details to get right: `delete` in `.finally` (not
-    `.then`, or a failed query leaves a poisoned rejected promise under that
-    key), and the map holds the **promise**, not the value.
-  - **Hard constraint for step 3**: the cache lookup must stay **behind
-    `requireAuth`**. `feed_shared` carries the `auth.uid() is null` guard from
-    `20260820080000`, and Redis has no RLS — a cache consulted before
-    authentication would hand a signed-in user's blob to an anonymous caller,
-    reopening exactly what that migration closed.
+    throttling.
+  - **Addressed head-on: does an in-memory `Map` violate the "front server
+    must be stateless" rule?** No — that rule targets state whose *correctness*
+    depends on being shared across instances (a rate-limit counter under-counts
+    if each instance keeps its own). Single-flight dedup is correct
+    **per-instance**: if N instances each dedupe independently, the worst case
+    with a badly-load-balanced burst is N concurrent RPC calls instead of 1 —
+    still far better than no dedup, and nobody ever receives a wrong answer
+    either way. Recorded as a deliberate, already-settled exception, not an
+    oversight.
+  - `routes/feed.ts`: the RPC-call-plus-`setCache` logic was extracted into its
+    own `fetchAndCacheFeed(client, params, key)`, passed to `singleFlight` as
+    `fn`; the route logs `{ key, joined }` with the message branching on
+    `joined` — `'feed cache miss (fetching)'` for the leader,
+    `'feed cache miss (joined in-flight fetch)'` for every follower.
+  - **Three-round review before this landed clean**: (1) the route body called
+    `setCache` a second time on the value `fetchAndCacheFeed` already returned
+    — meaning every joined follower would also redundantly rewrite the same
+    key (wasteful, and wrong in principle: the write is the leader's job only)
+    — fixed by deleting the outer call. (2) `joined` was destructured but never
+    read (`eslint`'s `no-unused-vars` caught it) — the log line hadn't actually
+    been updated to branch on it, which would have made this whole concept
+    unverifiable from outside: `joined` in the log is the *only* externally
+    observable proof dedup is happening at all, not a nicety. (3)
+    `fetchAndCacheFeed`'s `client` parameter was typed as bare `SupabaseClient`
+    instead of `SupabaseClient<Database>`, silently dropping schema-checked
+    `.rpc()` calls one function-boundary in — fixed with `type
+    FeedSupabaseClient = ReturnType<typeof getClientForRequest>`, deriving the
+    type from its single source of truth instead of re-importing `Database`
+    into a third file.
+  - **Verified with a real concurrent burst against the running local server**
+    (not simulated, not unit-tested — that's Step 5's job): flushed Redis,
+    fired 8 parallel requests at the same cold key, and read the server's own
+    structured logs directly. Request id 2: `joined: false`, `"feed cache miss
+    (fetching)"`; ids 3–9 (seven requests): `joined: true`, `"feed cache miss
+    (joined in-flight fetch)"`. **1 leader + 7 followers = 8, exactly one
+    `feed_shared` call for the whole burst.** All 8 responses landed within a
+    ~200ms cluster (`1360`–`1576ms`) rather than staggered — consistent with
+    followers awaiting the same shared promise rather than doing independent
+    work — and Redis ended up with exactly one clean entry at the correct TTL.
+  - **A real, worth-repeating environment gotcha, unrelated to the caching
+    code itself, that ate most of this verification session**: an orphaned
+    `node.exe` from an earlier `npm run dev` was still bound to port 4000 and
+    silently serving every request, while the terminal actually being watched
+    was a separate, freshly-started process receiving nothing. Both processes
+    showed as alive in `tasklist`; only `netstat -ano | grep :4000`'s
+    `LISTENING` line revealed which pid actually owned the port, and its pid
+    didn't match the visible terminal's own boot log. **On Windows, a
+    terminal printing `"msg":"server started"` is not proof that process is
+    the one actually holding the port** — cross-checking `netstat`'s owning
+    pid against the terminal's logged `pid` is the only reliable way to know
+    which process a request is really landing on. Fixed by `taskkill //F
+    //PID <both>` and one clean restart, re-confirmed by matching the new pid
+    across `netstat`, `tasklist`, and the boot log *before* re-running the
+    burst test.
 
-- **Server suite 53/53 across 4 files** after steps 1–2, confirming the
-  `REGION_REGEX` addition broke no existing case.
+- **Step 5 — the Redis test file, built + verified 2026-08-27, closing out
+  Concept 4.** Written directly by Claude at the user's explicit request (a
+  one-off exception to guide+review, same category as the `useComments.ts`
+  and end-of-Phase-4 exceptions) — the user's own scope was two things: write
+  the tests, and **rename the existing `concept1/2/3.test.ts` files to name
+  them after what they test, not the build concept that produced them.**
+  - **Renamed**: `concept1.test.ts` → `meProfile.test.ts` (JWT-forwarding +
+    cross-user isolation on `GET /api/me/profile`); `concept2.test.ts` →
+    `feedSharedRpc.test.ts` (the RPC's viewer-independence invariants);
+    `concept3.test.ts` → `feedEndpoint.test.ts` (`GET /api/feed`'s HTTP
+    contract). Done with `git mv` to preserve file history, each file's outer
+    `describe(...)` title and fixture message updated to match (dropping the
+    "Concept N — " prefix), and every reference in this file and
+    `docs/e2e-testing-and-test-ids.md` updated to the new names.
+  - **`tests/singleFlight.test.ts` — a pure unit suite, deliberately not an
+    integration test.** `lib/singleFlight.ts` has no Supabase/Redis coupling
+    at all (it's generic `Map`/`Promise` logic), so it's tested directly with
+    a controllable fake `fn` (a manually-resolvable "deferred" promise) rather
+    than through the HTTP layer — the only way to assert an *exact* call
+    count deterministically, without timing tricks or mocking Supabase (which
+    the project's real-integration philosophy rules out). Five cases: concurrent
+    calls collapse into one `fn` invocation with correct `joined` flags on
+    each caller; a second wave issued *after* the first resolves is **not**
+    deduped (dedup is for overlap, not identical keys generally); different
+    keys never cross-dedupe; a rejected `fn` frees the key afterward instead
+    of poisoning it forever (a later call for the same key retries); and a
+    leader's rejection correctly propagates to every follower waiting on it,
+    not just the leader itself.
+  - **`tests/feedCache.test.ts` — integration, against the real running app +
+    real Redis + real Supabase**, matching this project's standing
+    DB-verification philosophy. Two things had to be built to make this
+    possible: (1) `isRedisReady()` added to `lib/redis.ts` — a one-line export
+    of state the module's own guards already compute internally
+    (`client?.isReady`) — because a test file imports `createApp()` directly
+    the same way `index.ts` does, but never imports `index.ts` itself, so
+    `connectRedis()` never runs unless the test calls it, and polling
+    `isRedisReady()` is what lets a `beforeAll` wait for a real connection
+    instead of racing a fixed sleep against Docker's startup time. (2) a
+    second, independent `redis` client instantiated inside the test file
+    purely for inspection — the automated equivalent of the `redis-cli`
+    checks this concept was first verified with by hand. Five cases: miss
+    populates + hit serves an identical body; TTL keeps falling on a hit
+    rather than resetting (the same proof used manually — needs a real 1s
+    sleep, since TTL only ever moves by the clock actually running); an
+    expired key is a genuine re-miss; distinct params get independent keys;
+    and an 8-request concurrent burst against a cold key produces byte-identical
+    responses **and exactly one cache entry** — the end-to-end regression
+    guard sitting on top of `singleFlight.test.ts`'s rigorous call-count proof.
+  - **Verified for real, not just written**: `tsc --noEmit` and `eslint` both
+    clean, then the full suite run against the real stack (local server code
+    exercised in-process via `supertest`, real Docker Redis, real Supabase
+    test accounts) — **6 test files, 49 passed, 14 skipped, 0 failed.** The
+    skips are `feedSharedRpc.test.ts`'s anonymity-fixture cases, correctly
+    self-skipping because the entry window was in its 12pm–4pm dead zone at
+    run time (`globalSetup` logged `seeded 0/6 live posts`) — not a new
+    regression, the same condition already documented under Step 3. The raw
+    log output independently reconfirmed the Step 4 burst-dedup proof inside
+    the automated run itself: request id 9 logged `joined:false` ("fetching"),
+    ids 10–16 logged `joined:true` ("joined in-flight fetch") — 1 leader + 7
+    followers, exactly matching the manual verification.
+
+- **Server suite, final count for this concept: 6 test files, 49 passed, 14
+  skipped, 63 total** (was 53/53 across 4 files after steps 1–2) — the two
+  new files plus the renames account for the difference; no case broke or
+  regressed in the process.

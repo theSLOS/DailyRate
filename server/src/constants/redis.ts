@@ -5,3 +5,5 @@ export const SENTINEL = '~';
 export const SEPARATOR = '|';
 
 export const FEED_KEY_PREFIX = 'feed';
+
+export const FEED_CACHE_TTL_SECONDS = 30;

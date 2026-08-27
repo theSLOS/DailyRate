@@ -3,25 +3,36 @@ import { getClientForRequest } from '../lib/supabaseClient.js';
 import { parseFeedQuery } from '../lib/parseFeedQuery.js';
 import { AppError } from '../lib/errors.js';
 import type { FeedResponse, FeedSharedRow, ParsedFeedQuery } from '../types/feed.js';
+import { feedCacheKey } from '../lib/feedCacheKey.js';
+import { getCache, setCache } from '../lib/redis.js';
+import { FEED_CACHE_TTL_SECONDS } from '../constants/redis.js';
+import { singleFlight } from '../lib/singleFlight.js';
 
 export const feedRouter = Router();
+
+type FeedSupabaseClient = ReturnType<typeof getClientForRequest>;
 
 feedRouter.get('/', async (req, res) => {
   const params = parseFeedQuery(req.query);
 
   const client = getClientForRequest(req.jwt);
+  const key = feedCacheKey(params);
 
-  const { data, error } = await client.rpc('feed_shared', {
-    variant: params.variant,
-    region_code: params.regionCode ?? undefined,
-    cursor_ts: params.cursor ?? undefined,
-    page_size: params.limit,
-  });
+  const cached = await getCache<FeedResponse>(key);
+  if (cached) {
+    req.log.info({ key }, 'feed cache hit');
+    return res.json(cached);
+  }
 
-  if (error) throw new AppError(502, 'SUPABASE_ERROR', error.message);
+  const { value: response, joined } = await singleFlight(key, () =>
+    fetchAndCacheFeed(client, params, key)
+  );
 
-  const posts = data as FeedSharedRow[];
-  res.json({ posts, nextCursor: nextCursorFor(params, posts) } satisfies FeedResponse);
+  req.log.info(
+    { key, joined },
+    joined ? 'feed cache miss (joined in-flight fetch)' : 'feed cache miss (fetching)'
+  );
+  res.json(response);
 });
 
 function nextCursorFor(params: ParsedFeedQuery, rows: FeedSharedRow[]): string | null {
@@ -29,4 +40,24 @@ function nextCursorFor(params: ParsedFeedQuery, rows: FeedSharedRow[]): string |
   if (rows.length < params.limit) return null;
 
   return rows[rows.length - 1].created_at;
+}
+
+async function fetchAndCacheFeed(
+  client: FeedSupabaseClient,
+  params: ParsedFeedQuery,
+  key: string
+): Promise<FeedResponse> {
+  const { data, error } = await client.rpc('feed_shared', {
+    variant: params.variant,
+    region_code: params.regionCode ?? undefined,
+    cursor_ts: params.cursor ?? undefined,
+    page_size: params.limit,
+  });
+  if (error) throw new AppError(502, 'SUPABASE_ERROR', error.message);
+
+  const posts = data as FeedSharedRow[];
+  const response: FeedResponse = { posts, nextCursor: nextCursorFor(params, posts) };
+
+  await setCache(key, response, FEED_CACHE_TTL_SECONDS);
+  return response;
 }

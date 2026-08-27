@@ -35,6 +35,13 @@ export function connectRedis(): void {
   });
 }
 
+// exposes state the guards above already compute internally — added so tests
+// can wait for a real connection instead of racing a fixed sleep against
+// however long Docker's Redis takes to accept a socket
+export function isRedisReady(): boolean {
+  return client?.isReady ?? false;
+}
+
 export async function getCache<T>(key: string): Promise<T | null> {
   if (!client?.isReady) return null;
   try {
