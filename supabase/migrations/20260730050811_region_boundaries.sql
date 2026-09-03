@@ -4,7 +4,7 @@ create table public.region_boundaries (
     country_code text not null, 
     state_code text,
     name text not null,
-    geom geography(MultiPolygon, 4326) not null
+    geom geography(MultiPolygon, 4326) not null,
     check ((admin_level = 'country') = (state_code is null))
 );
 
