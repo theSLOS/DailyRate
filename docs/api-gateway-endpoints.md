@@ -116,11 +116,11 @@ new comment lands. Caching now would mean a freshly-posted comment silently
 missing from the thread for up to the TTL. Revisit once comment creation
 also routes through the server and can invalidate the key it just wrote to.
 
-## Concept 7 — post + engagement writes ⬜
+## Concept 7 — post + engagement writes 🟡
 
 | Status | Endpoint                             | Replaces                   | Note                                            |
 | ------ | ------------------------------------ | -------------------------- | ----------------------------------------------- |
-| ⬜     | `POST` / `PATCH /api/posts`          | `useUpsertPost`            | **not** rate-limited, deliberately              |
+| ✅     | `POST /api/posts`                    | `useUpsertPost`            | single route, not `POST`/`PATCH` — mirrors the existing `.upsert(onConflict: 'user_id,local_date')` call exactly; **not** rate-limited, deliberately |
 | ⬜     | `DELETE /api/posts/:id`              | entry-window delete policy |                                                 |
 | ⬜     | `PUT` / `DELETE /api/posts/:id/like` | `useToggleLike`            | optimistic update — the riskiest hook to rewire |
 

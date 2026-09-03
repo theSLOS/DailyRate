@@ -1,8 +1,11 @@
-import { supabase } from '@/lib/supabase';
-import { apiGet, ApiError } from '@/lib/apiClient';
+/**
+ * Read and toggle whether the current user has liked a post — this app's
+ * only optimistic mutation, flipping the like status and like_count ahead
+ * of the network round trip and rolling back on failure.
+ */
+import { apiGet, ApiError, apiDelete, apiPut } from '@/lib/apiClient';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { useQuery } from '@tanstack/react-query';
-import type { PostgrestError } from '@supabase/supabase-js';
 import type { FeedPost } from '@/types/posts';
 import { useMutation, UseMutationResult, useQueryClient } from '@tanstack/react-query';
 
@@ -12,6 +15,7 @@ type ToggleLikeContext = {
   previousPost: FeedPost | null | undefined;
 };
 
+/** Whether the current user has liked the given post. */
 export function useLikeStatus(
   postId: string | undefined,
   userId: string | undefined
@@ -31,26 +35,21 @@ export function useLikeStatus(
   });
 }
 
+/** Likes or unlikes a post, optimistically flipping the cached status + like_count before the request resolves. */
 export function useToggleLike(): UseMutationResult<
   void,
-  PostgrestError,
+  ApiError,
   ToggleLikeInput,
   ToggleLikeContext
 > {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ postId, userId, liked }) => {
+    mutationFn: async ({ postId, liked }) => {
       if (liked) {
-        const { error } = await supabase
-          .from('likes')
-          .delete()
-          .eq('post_id', postId)
-          .eq('user_id', userId);
-        if (error) throw error;
+        await apiDelete<void>(`/api/posts/${postId}/like`);
       } else {
-        const { error } = await supabase.from('likes').insert({ post_id: postId, user_id: userId });
-        if (error) throw error;
+        await apiPut<void>(`/api/posts/${postId}/like`);
       }
     },
     onMutate: async ({ postId, userId, liked }) => {
