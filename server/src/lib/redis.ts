@@ -1,3 +1,7 @@
+/**
+ * Fail-open Redis client wrapper: connects best-effort, and every read/write
+ * degrades to a cache miss (never an error) if Redis is unset or unreachable.
+ */
 import { createClient } from 'redis';
 import { logger } from './logger.js';
 import { BACKOFF_STEP_MS, MAX_BACKOFF_MS } from '../constants/redis.js';
@@ -8,6 +12,7 @@ let client: ReturnType<typeof createClient> | null = null;
 // 'error' on every attempt, so an unguarded handler logs indefinitely
 let outageLogged = false;
 
+/** Starts (unawaited) a Redis connection if REDIS_URL is set; no-ops otherwise. */
 export function connectRedis(): void {
   const url = process.env.REDIS_URL;
   if (!url) {
@@ -38,10 +43,12 @@ export function connectRedis(): void {
 // exposes state the guards above already compute internally — added so tests
 // can wait for a real connection instead of racing a fixed sleep against
 // however long Docker's Redis takes to accept a socket
+/** Whether the Redis client is currently connected and ready. */
 export function isRedisReady(): boolean {
   return client?.isReady ?? false;
 }
 
+/** Reads and JSON-parses a cache key, returning null on a miss, a read error, or no client. */
 export async function getCache<T>(key: string): Promise<T | null> {
   if (!client?.isReady) return null;
   try {
@@ -55,6 +62,7 @@ export async function getCache<T>(key: string): Promise<T | null> {
   }
 }
 
+/** JSON-serializes and writes a cache key with a TTL, swallowing any write failure. */
 export async function setCache(key: string, value: unknown, ttlSeconds: number): Promise<void> {
   if (!client?.isReady) return;
   try {
@@ -66,6 +74,7 @@ export async function setCache(key: string, value: unknown, ttlSeconds: number):
 }
 
 // node-redis types the emitted error as Error, which carries no `code`
+/** Extracts a Redis error's `code` field, or 'UNKNOWN' if it doesn't have one. */
 function errorCode(err: unknown): string {
   if (typeof err === 'object' && err !== null && 'code' in err && typeof err.code === 'string') {
     return err.code;

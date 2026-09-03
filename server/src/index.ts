@@ -1,3 +1,7 @@
+/**
+ * Server entrypoint: loads env, connects Redis (best-effort), and starts
+ * the HTTP listener.
+ */
 import 'dotenv/config'; // MUST be the very first import — everything
 // below reads process.env, so config has to
 // load before anything else runs

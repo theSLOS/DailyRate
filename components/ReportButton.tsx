@@ -1,3 +1,7 @@
+/**
+ * Inline reveal-a-form report button for a post or comment: tap to open a
+ * reason field, submit to file the report.
+ */
 import { useSubmitReport, ReportTargetType } from '@/hooks/useReports';
 import { JSX, useState } from 'react';
 import { View, Text, TextInput } from 'react-native';
@@ -9,6 +13,7 @@ export type ReportButtonProps = {
   targetId: string;
 };
 
+/** Renders a "Report" button that reveals a reason field and submits a report. */
 export function ReportButton({ reporterId, targetType, targetId }: ReportButtonProps): JSX.Element {
   const [isReporting, setIsReporting] = useState(false);
   const [reason, setReason] = useState('');

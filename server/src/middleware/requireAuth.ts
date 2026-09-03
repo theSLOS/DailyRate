@@ -1,3 +1,8 @@
+/**
+ * Auth gate for every mounted route group: requires a Bearer token (shape
+ * only, never verified server-side — RLS is the real check) and best-effort
+ * decodes the caller's user id for routes that need it.
+ */
 import type { Request, Response, NextFunction } from 'express';
 import { AppError } from '../lib/errors.js';
 import { uidFromJwt } from '../lib/jwt.js';
@@ -16,6 +21,7 @@ declare global {
   }
 }
 
+/** Rejects requests with no/malformed Bearer header; otherwise attaches req.jwt and best-effort req.userId. */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
   const [scheme, token] = header?.split(' ') ?? [];
@@ -39,6 +45,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 // for routes that actually need "my own id" (today's post, history, ...) —
 // narrows req.userId from string | undefined so callers don't each repeat
 // the same guard
+/** Returns req.userId, narrowed to string, or throws 401 if it's missing. */
 export function requireUserId(req: Request): string {
   if (!req.userId) {
     throw new AppError(401, 'UNAUTHENTICATED', 'Missing or malformed Authorization header');

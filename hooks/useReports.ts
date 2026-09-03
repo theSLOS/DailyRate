@@ -1,3 +1,6 @@
+/**
+ * Submits a moderation report against a post, comment, or user.
+ */
 import { supabase } from '@/lib/supabase';
 import type { UseMutationResult } from '@tanstack/react-query';
 import type { PostgrestError } from '@supabase/supabase-js';
@@ -12,6 +15,7 @@ type SubmitReportInput = {
   reason: string;
 };
 
+/** Fire-and-forget: inserts a report row, no client-side read of reports exists. */
 export function useSubmitReport(): UseMutationResult<void, PostgrestError, SubmitReportInput> {
   return useMutation({
     mutationFn: async ({ reporterId, targetType, targetId, reason }) => {

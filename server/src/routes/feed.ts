@@ -1,3 +1,9 @@
+/**
+ * The shared-feed endpoint (GET /api/feed) — read-through Redis cache in
+ * front of the viewer-independent feed_shared RPC, with single-flight
+ * collapsing on the miss path so a burst of requests for a cold key only
+ * triggers one fetch.
+ */
 import { Router } from 'express';
 import { getClientForRequest } from '../lib/supabaseClient.js';
 import { parseFeedQuery } from '../lib/parseFeedQuery.js';
@@ -12,6 +18,7 @@ export const feedRouter = Router();
 
 type FeedSupabaseClient = ReturnType<typeof getClientForRequest>;
 
+/** Serves a shared-feed page from Redis on a hit, or fetches (single-flighted) and caches it on a miss. */
 feedRouter.get('/', async (req, res) => {
   const params = parseFeedQuery(req.query);
 
@@ -35,6 +42,7 @@ feedRouter.get('/', async (req, res) => {
   res.json(response);
 });
 
+/** Computes the next page's cursor, or null for a bounded/exhausted result set. */
 function nextCursorFor(params: ParsedFeedQuery, rows: FeedSharedRow[]): string | null {
   if (params.variant === 'most_liked') return null;
   if (rows.length < params.limit) return null;
@@ -42,6 +50,7 @@ function nextCursorFor(params: ParsedFeedQuery, rows: FeedSharedRow[]): string |
   return rows[rows.length - 1].created_at;
 }
 
+/** Calls the feed_shared RPC, writes the result to Redis, and returns it. */
 async function fetchAndCacheFeed(
   client: FeedSupabaseClient,
   params: ParsedFeedQuery,

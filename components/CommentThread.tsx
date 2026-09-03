@@ -1,3 +1,8 @@
+/**
+ * A post's full comment thread — top-level comments with nested replies
+ * (capped at 2 levels: replying to a reply attaches to its top-level
+ * parent), plus the compose box for new comments/replies.
+ */
 import { useComments, useSubmitComment, CommentWithAuthor } from '@/hooks/useComments';
 import { JSX, useState } from 'react';
 import { View, Text, ActivityIndicator, TextInput } from 'react-native';
@@ -11,10 +16,12 @@ export type CommentThreadProps = {
   userId: string | undefined;
 };
 
+/** Resolves which comment a reply should attach to — always the top-level parent, enforcing the 2-level cap. */
 export function resolveReplyTarget(comment: CommentWithAuthor): string {
   return comment.parent_comment_id ?? comment.id;
 }
 
+/** Renders a post's comment tree and the new-comment/reply compose box. */
 export function CommentThread({ postId, userId }: CommentThreadProps): JSX.Element {
   const commentsQuery = useComments(postId);
   const submitComment = useSubmitComment();

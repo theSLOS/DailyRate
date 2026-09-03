@@ -1,3 +1,7 @@
+/**
+ * The Explore tab: the shared newest/most-liked/region feed, with its
+ * variant switcher, region-tier fallback notice, and infinite scroll.
+ */
 import { JSX, useState } from 'react';
 import { FlatList, Text, ActivityIndicator, View } from 'react-native';
 import { Centered } from '@/components/Centered';
@@ -9,6 +13,7 @@ import { FeedTypeSwitcher } from '@/components/FeedTypeSwitcher';
 import { LOCATION_RESOLVING_LABEL, REGION_TIER_NOTICES } from '@/constants/posts';
 import type { ExploreFeedType } from '@/types/feed';
 
+/** Renders the Explore feed for the selected variant, handling its own loading/error/empty states. */
 export default function ExploreScreen(): JSX.Element {
   const { session, loading: authLoading } = useAuth();
   const [feedType, setFeedType] = useState<ExploreFeedType>('newest');

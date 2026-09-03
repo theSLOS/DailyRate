@@ -1,3 +1,7 @@
+/**
+ * Root layout: loads fonts, wires up the QueryClientProvider and theme
+ * provider, and mounts the (auth)/(tabs) route groups.
+ */
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
@@ -20,6 +24,7 @@ export const unstable_settings = {
 
 SplashScreen.preventAutoHideAsync();
 
+/** Loads fonts and hides the splash screen once ready, then renders the real root nav. */
 export default function RootLayout(): JSX.Element | null {
   const [loaded, error] = useFonts({
     ...FontAwesome.font,
@@ -42,6 +47,7 @@ export default function RootLayout(): JSX.Element | null {
   return <RootLayoutNav />;
 }
 
+/** Wraps the (auth)/(tabs) stack in the query client and theme providers. */
 function RootLayoutNav(): JSX.Element {
   const colorScheme = useColorScheme();
 

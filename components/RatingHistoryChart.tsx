@@ -1,3 +1,7 @@
+/**
+ * Rating-over-time line chart for the history screen, with a
+ * week/month/all-time range toggle and a fixed 1-10 y-axis.
+ */
 import type { Post } from '@/types/posts';
 import { JSX, useState } from 'react';
 import { RATING_CHART_RANGES, type ChartRange } from '@/constants/chart';
@@ -7,6 +11,7 @@ import { VictoryAxis, VictoryChart, VictoryLine } from 'victory-native';
 
 export type RatingHistoryChartProps = { posts: Post[] };
 
+/** Renders the range toggle and a rating-over-time chart for the selected range. */
 export function RatingHistoryChart(props: RatingHistoryChartProps): JSX.Element {
   const [range, setRange] = useState<ChartRange>('week');
 

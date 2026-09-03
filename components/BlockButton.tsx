@@ -1,3 +1,6 @@
+/**
+ * Block/unblock toggle button for a post's author, shown on the post detail screen.
+ */
 import { useBlockStatus, useToggleBlock } from '@/hooks/useBlocks';
 import { JSX } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -7,6 +10,7 @@ export type BlockButtonProps = {
   blockedUserId: string;
 };
 
+/** Renders "Block"/"Unblock" for the given user and toggles the block relationship on press. */
 export function BlockButton({ blockerId, blockedUserId }: BlockButtonProps): JSX.Element {
   const blockStatusQuery = useBlockStatus(blockedUserId);
   const toggleBlock = useToggleBlock();

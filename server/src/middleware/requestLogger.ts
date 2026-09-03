@@ -1,3 +1,7 @@
+/**
+ * Structured per-request logging middleware (endpoint, status, timing),
+ * mounted first in app.ts so every request is logged regardless of outcome.
+ */
 import { pinoHttp } from 'pino-http';
 import type { Request, Response } from 'express';
 import { logger } from '../lib/logger.js';

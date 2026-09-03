@@ -1,3 +1,6 @@
+/**
+ * Incoming/outgoing friend requests screen, with accept/reject/cancel actions.
+ */
 import { JSX } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { Link, Stack } from 'expo-router';
@@ -10,10 +13,12 @@ import {
 import { Centered } from '@/components/Centered';
 import { UNNAMED_USER_LABEL } from '@/constants/profiles';
 
+/** Resolves the display label for a requester/addressee profile. */
 function profileLabel(profile: { display_name: string | null; username: string | null }): string {
   return profile.display_name ?? profile.username ?? UNNAMED_USER_LABEL;
 }
 
+/** Renders the current user's incoming and outgoing friend requests with their actions. */
 export default function FriendRequestsScreen(): JSX.Element {
   const { session, loading: authLoading } = useAuth();
   const requestsQuery = useFriendRequests(session?.user.id);

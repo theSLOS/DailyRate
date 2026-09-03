@@ -1,3 +1,7 @@
+/**
+ * The Friends tab: the personal, never-cached feed of posts from the
+ * current user's friends, with infinite scroll.
+ */
 import { JSX } from 'react';
 import { ActivityIndicator, FlatList, Text } from 'react-native';
 import { Centered } from '@/components/Centered';
@@ -5,6 +9,7 @@ import { ExplorePostCard } from '@/components/ExplorePostCard';
 import { useAuth } from '@/hooks/useAuth';
 import { useFriendsFeed } from '@/hooks/useFriendsFeed';
 
+/** Renders the current user's friends feed, handling its own loading/error/empty states. */
 export default function FriendsFeedScreen(): JSX.Element {
   const { session, loading: authLoading } = useAuth();
   const friendsFeedQuery = useFriendsFeed(session?.user.id);

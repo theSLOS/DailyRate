@@ -1,3 +1,7 @@
+/**
+ * The friends feed — personal, never Redis-cached, exempt from the
+ * shared-feed personalization ceiling. Client-derived cursor pagination.
+ */
 import { useInfiniteQuery, UseInfiniteQueryResult, InfiniteData } from '@tanstack/react-query';
 import { apiGet, ApiError } from '@/lib/apiClient';
 import type { FeedPost } from '@/types/posts';
@@ -5,6 +9,7 @@ import { FEED_PAGE_SIZE, POST_POLL_INTERVAL_MS } from '@/constants/posts';
 import { useHiddenPostsIds } from './useHiddenPosts';
 import { requireDefined } from '@/utils/requireDefined';
 
+/** Infinite-query the current user's friends feed, filtering out locally-hidden posts. */
 export function useFriendsFeed(
   userId: string | undefined
 ): UseInfiniteQueryResult<InfiniteData<FeedPost[], string | undefined>, ApiError> {

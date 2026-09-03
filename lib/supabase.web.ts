@@ -1,3 +1,8 @@
+/**
+ * The single Supabase client instance for web — relies on the browser's own
+ * storage (no AsyncStorage) and lets Supabase detect the session from the
+ * URL, unlike the native variant in `supabase.ts`.
+ */
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database';
 

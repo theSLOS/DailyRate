@@ -1,6 +1,11 @@
+/**
+ * Picks a photo from the device library and compresses/resizes it for
+ * upload, or returns null if the user cancels or denies permission.
+ */
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 
+/** Prompts for a library photo and returns a compressed local URI, or null if cancelled/denied. */
 export async function pickAndCompressImage(): Promise<string | null> {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {

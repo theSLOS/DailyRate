@@ -1,8 +1,12 @@
+/**
+ * Fetches a user's public profile (username, display name, avatar) by id.
+ */
 import { ProfilePublicRow } from '@/types/posts';
 import { useQuery, UseQueryResult } from '@tanstack/react-query';
 import { apiGet, ApiError } from '@/lib/apiClient';
 import { requireDefined } from '@/utils/requireDefined';
 
+/** Fetches the given user's public profile row, or null if not found. */
 export function useProfile(
   userId: string | undefined
 ): UseQueryResult<ProfilePublicRow | null, ApiError> {

@@ -1,3 +1,8 @@
+/**
+ * Builds the Express app: middleware order (logging -> CORS -> JSON body
+ * parsing -> per-route auth), the full route mount table, and the
+ * last-registered error handler.
+ */
 import cors from 'cors';
 import express, { Express } from 'express';
 import { requestLogger } from './middleware/requestLogger.js';
@@ -11,6 +16,7 @@ import { friendsRouter } from './routes/friends.js';
 import { profilesRouter } from './routes/profiles.js';
 import { regionRouter } from './routes/region.js';
 
+/** Assembles and returns the configured Express app (not yet listening). */
 export function createApp(): Express {
   const app = express();
 

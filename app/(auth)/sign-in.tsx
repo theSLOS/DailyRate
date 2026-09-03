@@ -1,3 +1,6 @@
+/**
+ * Email/password sign-in screen.
+ */
 import { useState, JSX } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
 import { Link } from 'expo-router';
@@ -5,12 +8,14 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
 import { TEST_IDS } from '@/constants/testIds';
 
+/** Renders the sign-in form and submits credentials to Supabase auth. */
 export default function SignInScreen(): JSX.Element {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** Signs in with the entered email/password, surfacing any auth error. */
   async function handleSignIn(): Promise<void> {
     setLoading(true);
     setError(null);

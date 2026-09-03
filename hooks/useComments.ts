@@ -1,3 +1,7 @@
+/**
+ * Read a post's comment thread (as a two-level tree) and submit new
+ * top-level comments or replies, with an optimistic temp-comment insert.
+ */
 import { supabase } from '@/lib/supabase';
 import { apiGet, ApiError } from '@/lib/apiClient';
 import type { Comment, FeedPost, ProfilePublicRow } from '@/types/posts';
@@ -11,6 +15,7 @@ export type CommentWithAuthor = Comment & {
   author: Pick<ProfilePublicRow, 'username' | 'display_name' | 'avatar_url'>;
 };
 
+/** Fetches a post's comments and assembles them into a top-level + replies tree. */
 export function useComments(
   postId: string | undefined
 ): UseQueryResult<CommentWithReplies[], ApiError> {
@@ -37,6 +42,7 @@ type SubmitCommentContext = {
   postId: string;
 };
 
+/** Posts a new top-level comment or reply, optimistically inserting a temp comment first. */
 export function useSubmitComment(): UseMutationResult<
   void,
   PostgrestError,

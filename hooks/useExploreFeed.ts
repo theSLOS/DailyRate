@@ -1,3 +1,8 @@
+/**
+ * The shared Explore feed: newest, most-liked, and region (state -> country
+ * -> most-liked fallback) variants, paginated and polled, with self- and
+ * hidden-post filtering applied client-side after the fetch.
+ */
 import { useInfiniteQuery, UseInfiniteQueryResult, InfiniteData } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { PostgrestError } from '@supabase/supabase-js';
@@ -18,6 +23,7 @@ type PageParam = {
   tier: RegionFeedTier | null;
 };
 
+/** Fetches one keyset page of the newest-first feed. */
 async function fetchNewest(cursor: string | undefined): Promise<FeedPost[]> {
   let query = supabase
     .from('posts_feed')
@@ -31,6 +37,7 @@ async function fetchNewest(cursor: string | undefined): Promise<FeedPost[]> {
   return data as FeedPost[];
 }
 
+/** Fetches the bounded top-N most-liked posts (no pagination — like_count is mutable). */
 async function fetchMostLiked(): Promise<FeedPost[]> {
   const { data, error } = await supabase
     .from('posts_feed')
@@ -43,6 +50,7 @@ async function fetchMostLiked(): Promise<FeedPost[]> {
   return data as FeedPost[];
 }
 
+/** Fetches one keyset page of posts scoped to a specific region code. */
 async function fetchByRegion(
   column: 'region_state_code' | 'region_country_code',
   code: string,
@@ -61,6 +69,7 @@ async function fetchByRegion(
   return data as FeedPost[];
 }
 
+/** Resolves and fetches one page of the region feed's state -> country -> most-liked fallback. */
 async function fetchRegionPage(param: PageParam, region: Region | null): Promise<ExploreFeedPage> {
   // the tier is resolved once, on the first page, then carried in the page param —
   // otherwise page 2 could fall through to a different tier than page 1 and interleave feeds
@@ -85,6 +94,7 @@ async function fetchRegionPage(param: PageParam, region: Region | null): Promise
   return { posts: await fetchMostLiked(), tier: 'mostLiked' };
 }
 
+/** Infinite-query the Explore feed for the given variant, filtering out the caller's own and locally-hidden posts. */
 export function useExploreFeed(
   userId: string | undefined,
   feedType: ExploreFeedType,

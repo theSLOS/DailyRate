@@ -1,3 +1,7 @@
+/**
+ * Post detail screen: full post content, like/report/hide/block actions,
+ * and the comment thread. Handles loading/error/not-found/loaded states.
+ */
 import { Link, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { usePost } from '@/hooks/usePost';
 import { JSX, useState } from 'react';
@@ -15,6 +19,7 @@ import { CommentThread } from '@/components/CommentThread';
 import { useQueryClient } from '@tanstack/react-query';
 import { useHidePost } from '@/hooks/useHiddenPosts';
 
+/** Renders one post's full detail view plus its comment thread. */
 export default function PostDetailScreen(): JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>();
   const postQuery = usePost(id);
@@ -26,6 +31,7 @@ export default function PostDetailScreen(): JSX.Element {
   const router = useRouter();
   const post = postQuery.data;
 
+  /** Pull-to-refresh: invalidates both the post and its comment thread. */
   const onRefresh = async (): Promise<void> => {
     setRefreshing(true);
     await Promise.all([

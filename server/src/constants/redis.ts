@@ -1,3 +1,7 @@
+/**
+ * Redis cache config: reconnect backoff bounds, cache-key formatting
+ * tokens, and the feed cache's TTL.
+ */
 export const BACKOFF_STEP_MS = 200;
 export const MAX_BACKOFF_MS = 3000;
 

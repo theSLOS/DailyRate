@@ -1,3 +1,7 @@
+/**
+ * Region resolution (GET /api/region?lat=&lng=) — proxies the
+ * resolve_region RPC only; permission + GPS reads stay entirely client-side.
+ */
 import { Router } from 'express';
 import { getClientForRequest } from '../lib/supabaseClient.js';
 import { AppError } from '../lib/errors.js';
@@ -7,6 +11,7 @@ export const regionRouter = Router();
 // device location permission + GPS read stay entirely client-side (the server
 // has no access to either) — this endpoint only proxies the resolve_region
 // RPC once the client already has coordinates
+/** Resolves a lat/lng pair to a region (country/state/place label), or null if no match. */
 regionRouter.get('/', async (req, res) => {
   const lat = Number(req.query.lat);
   const lng = Number(req.query.lng);

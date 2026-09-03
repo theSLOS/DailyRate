@@ -1,9 +1,13 @@
+/**
+ * Fallback screen for an unmatched route.
+ */
 import { Link, Stack } from 'expo-router';
 import { StyleSheet } from 'react-native';
 
 import { Text, View } from 'react-native';
 import { JSX } from 'react';
 
+/** Renders a simple "not found" message with a link back home. */
 export default function NotFoundScreen(): JSX.Element {
   return (
     <>

@@ -1,3 +1,8 @@
+/**
+ * Resolves the device's current region (state/country) from GPS, via the
+ * server-proxied resolve_region RPC. Permission and location reads stay
+ * entirely client-side; only the RPC call itself is proxied.
+ */
 import { apiGet } from '@/lib/apiClient';
 import { useQuery, UseQueryResult } from '@tanstack/react-query';
 import type { RegionResult, Region } from '@/types/region';
@@ -12,6 +17,7 @@ type ResolveRegionRow = {
   place_label: string;
 };
 
+/** Requests location permission, reads GPS, and resolves it to a region via the server. */
 export function useSessionRegion(
   userId: string | undefined,
   // callers gate this so the OS location prompt only fires when the user does

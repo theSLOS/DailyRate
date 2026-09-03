@@ -1,3 +1,7 @@
+/**
+ * The rating/message/photo/anonymity compose form shared by create and edit
+ * flows on the Today screen — presentational only, no data fetching.
+ */
 import { JSX, useState } from 'react';
 import { Image, Pressable, Text, TextInput, View, Switch } from 'react-native';
 import { pickAndCompressImage } from '@/utils/pickAndCompressImage';
@@ -20,6 +24,7 @@ type ComposeFormProps = {
   }) => void;
 };
 
+/** Renders the rating/message/photo/anonymity form and calls onSubmit with the current values. */
 export function ComposeForm(props: ComposeFormProps): JSX.Element {
   const [rating, setRating] = useState(props.initialRating ?? 5);
   const [message, setMessage] = useState(props.initialMessage ?? '');
@@ -27,6 +32,7 @@ export function ComposeForm(props: ComposeFormProps): JSX.Element {
   const [isAnonymous, setIsAnonymous] = useState(props.initialIsAnonymous ?? false);
   const displayedPhotoUri = newPhotoLocalUri ?? props.initialPhotoDisplayUri ?? null;
 
+  /** Picks and compresses a new photo from the library, updating local state if one was chosen. */
   async function handlePickPhoto(): Promise<void> {
     const uri = await pickAndCompressImage();
     if (uri) {
@@ -34,6 +40,7 @@ export function ComposeForm(props: ComposeFormProps): JSX.Element {
     }
   }
 
+  /** Calls onSubmit with the form's current values. */
   function handleSubmit(): void {
     props.onSubmit({ rating, message, newPhotoLocalUri, isAnonymous });
   }

@@ -1,3 +1,8 @@
+/**
+ * The single friend-relationship action button for another user — its
+ * label and behavior (add/cancel/accept+reject/remove) switch on the
+ * derived FriendStatus.
+ */
 import {
   useAcceptFriendRequest,
   useDeleteFriendRequest,
@@ -14,6 +19,7 @@ export type FriendActionButtonProps = {
   sessionUserId: string | undefined;
 };
 
+/** Renders the friend-relationship action appropriate to the current status with another user. */
 export function FriendActionButton({
   otherUserId,
   sessionUserId,

@@ -1,3 +1,6 @@
+/**
+ * The shared pino logger instance, with Authorization/cookie headers redacted.
+ */
 import pino from 'pino';
 
 // paths are matched against the shape the serializers emit, not the raw Express

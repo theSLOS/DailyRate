@@ -2031,3 +2031,81 @@ are done. Remaining before the gateway is complete: the write half of
 Concepts 7–9 (post CRUD, likes/comments/blocks/friend-request mutations,
 `useEnsureTimezone`), rate limiting (Concept 8), and Storage signed URLs
 (Concept 11) — see `docs/api-gateway-endpoints.md` for the live roster.
+
+---
+
+Phase 5.5, **Concept 7 (post + engagement writes) started 2026-09-03**, first
+piece — `POST /api/posts` — built and verified DB-level + app-level same day.
+Sequenced deliberately as upsert → delete → like-toggle, upsert first since
+it has no optimistic update to get wrong, saving the flagged-riskiest piece
+(`useToggleLike`, this app's only optimistic mutation) for last.
+
+- **Decision: one `POST /api/posts` route, not `POST`/`PATCH`.** Matches the
+  underlying `.upsert(onConflict: 'user_id,local_date')` call exactly — there
+  was never a separate create-vs-update branch in the DB call, so splitting
+  the HTTP verb would only add client-side branching with no behavioral
+  benefit. `local_date` is trusted from the client (still computed by
+  `getEntryDate` in the hook, same as before) rather than recomputed
+  server-side — the DB's own `validate_local_date` trigger is still the real
+  enforcement, so a lying client is rejected there, not silently accepted.
+- **`lib/apiClient.ts` gained `apiPost<T>`** alongside the existing `apiGet`
+  — same JWT-attach + `ApiError`-parse pattern, POST verb + JSON body.
+- **`server/src/routes/posts.ts` gained the route** — `requireUserId(req)`
+  for `user_id` (never `req.body.userId`), a `parseUpsertPostBody` shape
+  guard (`400 INVALID_PARAM` on missing `rating`/`message`/`localDate`,
+  rather than a confusing `502` from a malformed upsert), then the same
+  `.upsert(...).select().single()` shape the client used to call directly.
+- **`useUpsertPost` (`hooks/usePosts.ts`) rewired** to call `apiPost` instead
+  of `supabase.from('posts').upsert(...)` — error type `PostgrestError` →
+  `ApiError`, same swap every other migrated hook made. The request body
+  drops `user_id` entirely (server derives it from the JWT) and uses
+  camelCase field names matching `UpsertPostBody` server-side.
+- **Two literal-paste-artifact bugs hit and fixed while wiring this, same
+  recurring pattern as Phase 4's**: the route handler's first draft had the
+  review conversation's inline comments pasted directly into the object
+  literal (duplicate `user_id` key, unbalanced braces, `.select.single()`
+  missing its `()`s); `apiClient.ts`'s first draft of `apiPost` was missing
+  `await` on `fetch(...)` (surfaced as a type error on `res`, since
+  `parseResponse` expected a `Response` not a `Promise<Response>`) and used
+  single-quotes instead of a template literal for the URL (`'${API_BASE_URL}${path}'`
+  as a literal string, not interpolated).
+- **Verified DB-level via a throwaway Node script** (session scratchpad, not
+  repo — reused `.env`/`.env.test.local` directly, no external deps), against
+  the real running dev server + real Supabase, one dummy account: real insert
+  → `200`; same `local_date` again with a different rating → `200`, same
+  `id`, rating updated (proves upsert, not a `409` duplicate); no
+  `Authorization` header → `401`; malformed body (missing `rating`) → `400`
+  not `502`; cross-checked against `GET /api/me/posts/today` to confirm the
+  row that landed matched what the route returned. One script bug caught
+  along the way, not a route bug: computing the Sydney entry-window date via
+  `new Date("YYYY-MM-DDT00:00:00")` (parsed as the *script's own machine's*
+  local time) mixed with `.toISOString()` (UTC) silently shifted the date by
+  a day — fixed by doing the date math entirely in UTC space (`Date.UTC`/
+  `getUTCDate`), a genuine gotcha worth remembering for any future ad-hoc
+  verification script that computes a local_date.
+- **Verified app-level**: posted through the real compose form, confirmed it
+  appears correctly in History.
+
+**How to apply:** next up in Concept 7: `DELETE /api/posts/:id` (RLS already
+exists, `20260810094200_delete_own_post_in_entry_window.sql` — just needs the
+route + hook wiring), then `useToggleLike`'s `PUT`/`DELETE /api/posts/:id/like`
+last, deliberately, since it's the one optimistic mutation in the app.
+
+---
+
+**Comment convention changed 2026-09-03**, cross-cutting, not tied to a
+phase. `memory/CLAUDE.md`'s Comments section now requires two mandatory
+comments beyond the existing "why, not what" rule: a `/** ... */` file
+summary before any imports, and a one-line `/** ... */` goal comment above
+every function. Applied by Claude directly at the user's request across all
+90 in-scope files (`app/`, `components/`, `hooks/`, `lib/`, `utils/`,
+`types/`, `constants/`, `server/src/`) — deliberately excluding
+`__tests__/`/`server/tests/` (their own established fixture/assertion-reasoning
+comment convention) and `types/database.ts` (Supabase-CLI-generated, gets
+overwritten on the next `supabase gen types` run). Every existing `//`
+why-comment was preserved as-is; the two new comment types are additive.
+Verified: `tsc --noEmit` clean on both app and server, `eslint` clean on
+both, full app Jest suite green (107/107) — server integration suite not
+re-run in full (no server behavior changed, only comments; avoided the
+known Supabase Auth rate-limit risk of re-authenticating the whole test
+pool for no behavioral reason).

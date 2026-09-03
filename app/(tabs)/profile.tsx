@@ -1,3 +1,7 @@
+/**
+ * The Profile tab: the current user's own profile header, friend
+ * count/requests links, rating chart, and full post history.
+ */
 import { JSX } from 'react';
 import { FlatList, Text, ActivityIndicator, View, Image } from 'react-native';
 import { Link } from 'expo-router';
@@ -10,6 +14,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useFriendCount, useFriendRequests } from '@/hooks/useFriends';
 import { UNNAMED_USER_LABEL } from '@/constants/profiles';
 
+/** Renders the current user's own profile header, rating chart, and post history list. */
 export default function MyProfileScreen(): JSX.Element {
   const { session, loading: authLoading } = useAuth();
   const historyQuery = usePostHistory(session?.user.id);

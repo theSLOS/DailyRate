@@ -1,3 +1,8 @@
+/**
+ * Types for the shared-feed gateway: the feed_shared RPC's row shape
+ * (narrowed back to its true nullability), the parsed query, and the
+ * endpoint's response envelope.
+ */
 import type { Database } from '../../../types/database.ts';
 import { FEED_VARIANTS } from '../constants/feed.js';
 

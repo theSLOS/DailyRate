@@ -1,3 +1,7 @@
+/**
+ * The single Supabase client instance for native (AsyncStorage-backed
+ * session persistence). See `supabase.web.ts` for the web variant.
+ */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database';

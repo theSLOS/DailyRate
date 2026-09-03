@@ -1,3 +1,6 @@
+/**
+ * Email/password sign-up screen, with a client-side password-confirmation check.
+ */
 import { useState, JSX } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
 import { Link } from 'expo-router';
@@ -5,12 +8,14 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
 import { TEST_IDS } from '@/constants/testIds';
 
+/** Renders the sign-up form and submits a new account to Supabase auth. */
 export default function SignUpScreen(): JSX.Element {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmPassword, setConfirmPassword] = useState('');
+  /** Validates the password confirmation, then signs up with the entered credentials. */
   async function handleSignUp(): Promise<void> {
     setLoading(true);
     setError(null);

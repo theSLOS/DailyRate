@@ -1,3 +1,7 @@
+/**
+ * Shared button primitive — `primary`/`plain` visual variants over a single
+ * Pressable, with testID forwarding for E2E.
+ */
 import { JSX } from 'react';
 import { Pressable, Text } from 'react-native';
 
@@ -17,6 +21,7 @@ const VARIANT_CLASSES: Record<ButtonVariant, { pressable: string; text: string }
   plain: { pressable: '', text: '' },
 };
 
+/** Renders a Pressable + Text styled by variant, forwarding testID and disabled state. */
 export function Button({
   label,
   onPress,

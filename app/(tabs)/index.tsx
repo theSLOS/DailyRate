@@ -1,3 +1,7 @@
+/**
+ * The Home tab ("Today"): create/edit today's entry within the active
+ * posting window, including photo upload and region resolution.
+ */
 import { useState } from 'react';
 import { Text, ActivityIndicator, Alert } from 'react-native';
 import { useAuth } from '@/hooks/useAuth';
@@ -11,6 +15,7 @@ import { useSessionRegion } from '@/hooks/useSessionRegion';
 import { LOCATION_RESOLVING_LABEL } from '@/constants/posts';
 import type { JSX } from 'react';
 
+/** Renders the compose form for today's entry (create or edit) and handles its submission. */
 export default function TodayScreen(): JSX.Element {
   const { session, loading: authLoading } = useAuth();
   const entryDate = getEntryDate(new Date());
@@ -44,6 +49,7 @@ export default function TodayScreen(): JSX.Element {
     );
   }
 
+  /** Uploads a new photo if one was picked, then upserts today's post with the form's values. */
   async function handleSubmit(values: {
     rating: number;
     message: string;

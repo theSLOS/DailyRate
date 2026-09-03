@@ -1,3 +1,7 @@
+/**
+ * Tab group layout: Explore/Home/Friends/Profile tabs, gated behind
+ * session state, with the timezone backfill kicked off here.
+ */
 import React, { JSX } from 'react';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Redirect, Tabs } from 'expo-router';
@@ -10,6 +14,7 @@ import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import { useEnsureTimezone } from '@/hooks/useEnsureTimezone';
 import { HeaderProfileName } from '@/components/HeaderProfileName';
 
+/** Renders a themed FontAwesome tab bar icon. */
 function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>['name'];
   color: string;
@@ -17,6 +22,7 @@ function TabBarIcon(props: {
   return <FontAwesome size={28} style={styles.tabBarIcon} {...props} />;
 }
 
+/** Gates the tab bar behind session state and renders the four main tabs. */
 export default function TabLayout(): JSX.Element {
   const colorScheme = useColorScheme();
   const { session, loading } = useAuth();

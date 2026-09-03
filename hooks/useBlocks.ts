@@ -1,3 +1,6 @@
+/**
+ * Read and toggle whether the current user has blocked another user.
+ */
 import { PostgrestError } from '@supabase/supabase-js';
 import {
   UseMutationResult,
@@ -10,6 +13,7 @@ import { supabase } from '@/lib/supabase';
 import { apiGet, ApiError } from '@/lib/apiClient';
 import { requireDefined } from '@/utils/requireDefined';
 
+/** Whether the current user has blocked the given user. */
 export function useBlockStatus(
   blockedUserId: string | undefined
 ): UseQueryResult<boolean, ApiError> {
@@ -25,6 +29,7 @@ export function useBlockStatus(
 
 type ToggleBlockInput = { blockerId: string; blockedUserId: string; isCurrentlyBlocked: boolean };
 
+/** Blocks or unblocks a user, branching on the caller-supplied current state. */
 export function useToggleBlock(): UseMutationResult<void, PostgrestError, ToggleBlockInput> {
   const queryClient = useQueryClient();
   return useMutation({

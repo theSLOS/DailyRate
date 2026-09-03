@@ -49,7 +49,7 @@ Implement one concept, verify it in isolation directly against the DB/API (not t
 | 4.7   | Friends (two-way mutual follow) — relationships only                   | complete                                                                    |
 | 4.8   | Friends feed + Friends tab                                             | complete                                                                    |
 | 5     | Filtering & proximity (region-based, not distance-radius — see memory) | complete                                                                    |
-| 5.5   | Front server + Redis caching layer                                     | in progress (server skeleton, `feed_shared` RPC, `GET /api/feed` + Redis caching, and all personal-read passthrough + client wiring complete; writes/rate-limiting/storage not started) |
+| 5.5   | Front server + Redis caching layer                                     | in progress (server skeleton, `feed_shared` RPC, `GET /api/feed` + Redis caching, and all personal-read passthrough + client wiring complete; `POST /api/posts` (Concept 7) built + verified; rest of writes/rate-limiting/storage not started) |
 | 6     | Notifications                                                          | not started                                                                 |
 | 7     | Trust, safety & privacy                                                | not started                                                                 |
 | 8     | Polish & performance                                                   | not started                                                                 |
@@ -227,9 +227,19 @@ utils/                 # Pure functions with no side effects
 
 ### Comments
 
-- Default: no comments. Well-named identifiers should be self-explanatory.
-- Write a comment only when the _why_ is non-obvious: a hidden constraint, a workaround, a subtle invariant.
+- **Every file opens with a `/** ... */` summary comment**, before any imports, describing what the file is for.
+- **Every function gets a one-line `/** ... */` goal comment** directly above it, stating its purpose — not what it does step-by-step.
+- Beyond those two mandatory comments: no comments by default. Well-named identifiers should be self-explanatory.
+- Write an additional comment only when the _why_ is non-obvious: a hidden constraint, a workaround, a subtle invariant.
 - Never comment _what_ the code does.
+
+(Changed 2026-09-03 from a stricter "default: no comments" rule — file
+summaries and per-function goal comments are now mandatory everywhere in
+`app/`, `components/`, `hooks/`, `lib/`, `utils/`, `types/`, `constants/`,
+`server/src/`. Excludes `__tests__/`, `server/tests/` — those already carry
+their own established fixture/assertion-reasoning comment convention — and
+`types/database.ts`, which is Supabase-CLI-generated and gets overwritten on
+the next `supabase gen types` run.)
 
 ### Git commits
 

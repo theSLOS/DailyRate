@@ -1,3 +1,7 @@
+/**
+ * Segmented control for switching the Explore feed between its
+ * newest/most-liked/region variants.
+ */
 import { JSX } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { ExploreFeedType } from '@/types/feed';
@@ -10,6 +14,7 @@ type FeedTypeSwitcherProps = {
 
 const FEED_TYPES: ExploreFeedType[] = ['newest', 'mostLiked', 'region'];
 
+/** Renders one pill per feed variant, highlighting the active one, and calls onChange on tap. */
 export function FeedTypeSwitcher({ value, onChange }: FeedTypeSwitcherProps): JSX.Element {
   return (
     <View className="flex-row gap-2 p-3">

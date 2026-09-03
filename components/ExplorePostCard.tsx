@@ -1,3 +1,8 @@
+/**
+ * A single post card in the Explore feed — author (or "Anonymous"), age,
+ * place, rating, message, photo, and engagement counts, tapping through to
+ * the post detail screen.
+ */
 import type { FeedPost } from '@/types/posts';
 import { useSignedPhotoUrl } from '@/hooks/useSignedPhotoUrl';
 import { JSX } from 'react';
@@ -8,6 +13,7 @@ import { Link } from 'expo-router';
 
 export type ExplorePostCardProps = { post: FeedPost };
 
+/** Renders one feed post as a tappable card linking to its detail screen. */
 export function ExplorePostCard({ post }: ExplorePostCardProps): JSX.Element {
   const photoUrlQuery = useSignedPhotoUrl(post.photo_url);
 

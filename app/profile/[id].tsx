@@ -1,3 +1,8 @@
+/**
+ * Another user's profile screen: their public info, friend action button,
+ * report action, and latest live post. Redirects to the own-profile tab if
+ * the viewed id is the signed-in user's own.
+ */
 import { useLocalSearchParams, Redirect, Stack } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -11,6 +16,7 @@ import { JSX } from 'react';
 import { ActivityIndicator, View, Text, Image } from 'react-native';
 import { UNNAMED_USER_LABEL } from '@/constants/profiles';
 
+/** Renders another user's public profile, or redirects home if it's the viewer's own. */
 export default function ProfileScreen(): JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session, loading: authLoading } = useAuth();

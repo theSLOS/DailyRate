@@ -1,3 +1,8 @@
+/**
+ * Friend requests and friendships: reads (requests, ids, list, count,
+ * derived status) plus the four write mutations (send/reject-or-cancel a
+ * request, accept, remove a friendship).
+ */
 import {
   useMutation,
   UseMutationResult,
@@ -23,6 +28,7 @@ export type FriendshipWithProfile = Friendship & {
   friend: Pick<ProfilePublicRow, 'id' | 'username' | 'display_name' | 'avatar_url'>;
 };
 
+/** Fetches every pending friend request involving the current user, either direction. */
 export function useFriendRequests(
   sessionUserId: string | undefined
 ): UseQueryResult<FriendRequestWithProfiles[], ApiError> {
@@ -36,6 +42,7 @@ export function useFriendRequests(
   });
 }
 
+/** Fetches the current user's friend ids as a Set, for cheap membership checks. */
 export function useFriendsIds(
   sessionUserId: string | undefined
 ): UseQueryResult<Set<string>, ApiError> {
@@ -50,6 +57,7 @@ export function useFriendsIds(
   });
 }
 
+/** Fetches the current user's full friends list with each friend's profile. */
 export function useFriendsList(
   sessionUserId: string | undefined
 ): UseQueryResult<FriendshipWithProfile[], ApiError> {
@@ -63,6 +71,7 @@ export function useFriendsList(
   });
 }
 
+/** Fetches a given user's friend count via the denormalized friend_count RPC (never map over a list). */
 export function useFriendCount(userId: string | undefined): UseQueryResult<number, ApiError> {
   return useQuery({
     queryKey: ['friends', { count: userId }],
@@ -74,6 +83,7 @@ export function useFriendCount(userId: string | undefined): UseQueryResult<numbe
   });
 }
 
+/** Derives the current user's relationship to another user (friends/incoming/outgoing/blocked/etc.) from cached reads. */
 export function useFriendStatus(
   otherUserId: string | undefined,
   sessionUserId: string | undefined
@@ -117,6 +127,7 @@ export function useFriendStatus(
 
 type SendFriendRequestInput = { requesterId: string; addresseeId: string };
 
+/** Sends a friend request from requesterId to addresseeId. */
 export function useSendFriendRequest(): UseMutationResult<
   void,
   PostgrestError,
@@ -143,6 +154,7 @@ type DeleteFriendRequestInput = { requesterId: string; addresseeId: string };
 // Covers both rejecting a request sent to you and cancelling one you sent —
 // friend_requests' DELETE policy authorises either party, so the only
 // difference is which way round the caller passes the ids.
+/** Deletes a pending friend request — used for both rejecting and cancelling. */
 export function useDeleteFriendRequest(): UseMutationResult<
   void,
   PostgrestError,
@@ -168,6 +180,7 @@ export function useDeleteFriendRequest(): UseMutationResult<
 
 type AcceptFriendRequestInput = { otherUserId: string };
 
+/** Accepts a pending friend request via the accept_friend_request RPC. */
 export function useAcceptFriendRequest(): UseMutationResult<
   void,
   PostgrestError,
@@ -195,6 +208,7 @@ export function useAcceptFriendRequest(): UseMutationResult<
 
 type RemoveFriendshipInput = { otherUserId: string };
 
+/** Removes an existing friendship (both mirrored rows) via the remove_friendship RPC. */
 export function useRemoveFriendship(): UseMutationResult<
   void,
   PostgrestError,

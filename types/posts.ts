@@ -1,3 +1,8 @@
+/**
+ * Post-related types: the generated `posts`/`comments` row shapes, and
+ * `FeedPost` — the shared-feed view's row, narrowed back to its true
+ * (non-nullable-for-content) nullability.
+ */
 import { Database } from '@/types/database';
 
 export type Post = Database['public']['Tables']['posts']['Row'];

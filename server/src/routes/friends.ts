@@ -1,3 +1,8 @@
+/**
+ * Friend/friendship reads (requests, ids, list, count, feed). The four
+ * write mutations (send/reject-or-cancel/accept/remove) still go client ->
+ * Supabase directly, not yet routed through the gateway.
+ */
 import { Router } from 'express';
 import { getClientForRequest } from '../lib/supabaseClient.js';
 import { AppError } from '../lib/errors.js';
@@ -5,6 +10,7 @@ import { DEFAULT_PAGE_SIZE } from '../constants/feed.js';
 
 export const friendsRouter = Router();
 
+/** Every pending friend request involving the caller, either direction, with both profiles embedded. */
 friendsRouter.get('/requests', async (req, res) => {
   const client = getClientForRequest(req.jwt);
   const { data, error } = await client
@@ -20,6 +26,7 @@ friendsRouter.get('/requests', async (req, res) => {
 
 // flat string[] of friend ids, not the {friend_id}[] row shape — the client
 // just wraps this in `new Set(...)` directly instead of mapping first
+/** The caller's friend ids, as a flat array. */
 friendsRouter.get('/ids', async (req, res) => {
   const client = getClientForRequest(req.jwt);
   const { data, error } = await client.from('friendships').select('friend_id');
@@ -28,6 +35,7 @@ friendsRouter.get('/ids', async (req, res) => {
   res.json(data.map((row) => row.friend_id));
 });
 
+/** The caller's full friends list, with each friend's profile embedded. */
 friendsRouter.get('/list', async (req, res) => {
   const client = getClientForRequest(req.jwt);
   const { data, error } = await client
@@ -41,6 +49,7 @@ friendsRouter.get('/list', async (req, res) => {
   res.json(data);
 });
 
+/** A given user's friend count, via the denormalized friend_count RPC. */
 friendsRouter.get('/count', async (req, res) => {
   const userId = req.query.userId;
   if (typeof userId !== 'string' || userId === '') {
@@ -57,6 +66,7 @@ friendsRouter.get('/count', async (req, res) => {
 // the view already restricts rows to this viewer's friends (RLS-equivalent at
 // the view level) — no additional user_id filter here, which would incorrectly
 // drop friends' anonymous posts (their user_id is nulled by the view)
+/** One keyset page of the caller's friends feed. */
 friendsRouter.get('/feed', async (req, res) => {
   const cursor = req.query.cursor;
   if (cursor !== undefined && typeof cursor !== 'string') {

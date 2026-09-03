@@ -1,3 +1,7 @@
+/**
+ * Post/feed-related magic values: labels, polling interval, anonymity
+ * copy, and the shared-feed page size / most-liked cap.
+ */
 export const ANONYMOUS_AUTHOR_LABEL = 'Anonymous';
 
 export const POST_POLL_INTERVAL_MS = 7000;

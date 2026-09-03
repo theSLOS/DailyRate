@@ -1,3 +1,6 @@
+/**
+ * Like/unlike toggle button for a post, showing the current like count.
+ */
 import { useLikeStatus, useToggleLike } from '@/hooks/useLikes';
 import { JSX } from 'react';
 import { Text, View } from 'react-native';
@@ -9,6 +12,7 @@ export type LikeButtonProps = {
   likeCount: number;
 };
 
+/** Renders "Like"/"Unlike" plus the like count, and toggles the like on press. */
 export function LikeButton({ postId, userId, likeCount }: LikeButtonProps): JSX.Element {
   const likeStatusQuery = useLikeStatus(postId, userId);
   const toggleLike = useToggleLike();
