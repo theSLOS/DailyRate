@@ -103,6 +103,31 @@ still starts and serves requests, just without caching. CORS is wide open
 client, deliberately flagged to tighten before any real deployment (see
 `memory/CLAUDE.md`).
 
+**Checking status / shutting down** (PowerShell; macOS/Linux: swap in `lsof
+-i :4000` and `kill <pid>`):
+
+```powershell
+# Is the front server listening on 4000?
+Get-NetTCPConnection -LocalPort 4000 -ErrorAction SilentlyContinue
+
+# Is Redis up?
+docker ps --filter name=dayrate-redis --format "{{.Names}}: {{.Status}}"
+```
+
+`Get-NetTCPConnection` returning nothing (no error, just blank) means the
+server isn't running. To stop the server: `Ctrl+C` in the terminal running
+`npm run dev` if you still have it open; otherwise find and kill the process
+directly:
+
+```powershell
+Get-NetTCPConnection -LocalPort 4000 | Select-Object -ExpandProperty OwningProcess
+Stop-Process -Id <that PID> -Force
+```
+
+To stop Redis: `docker stop dayrate-redis` — stops the container without
+deleting it, so `docker start dayrate-redis` brings it right back later;
+never `docker run` it again (that fails on the name already existing).
+
 **4. Client app:**
 
 ```bash
