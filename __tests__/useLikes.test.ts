@@ -1,15 +1,18 @@
 import { act, waitFor } from '@testing-library/react-native';
 import { useLikeStatus, useToggleLike } from '@/hooks/useLikes';
-import { supabase } from '@/lib/supabase';
-import { apiGet } from '@/lib/apiClient';
+import { apiGet, apiPut, apiDelete } from '@/lib/apiClient';
 import type { FeedPost } from '@/types/posts';
 import { renderHookWithQueryClient } from './testUtils/renderHookWithQueryClient';
 
-jest.mock('@/lib/supabase', () => ({ supabase: { from: jest.fn() } }));
-jest.mock('@/lib/apiClient', () => ({ apiGet: jest.fn() }));
+jest.mock('@/lib/apiClient', () => ({
+  apiGet: jest.fn(),
+  apiPut: jest.fn(),
+  apiDelete: jest.fn(),
+}));
 
-const mockFrom = supabase.from as jest.Mock;
 const mockApiGet = apiGet as jest.Mock;
+const mockApiPut = apiPut as jest.Mock;
+const mockApiDelete = apiDelete as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -60,19 +63,20 @@ describe('useLikeStatus', () => {
 });
 
 // The highest-risk hook in the codebase per its own review history — optimistic
-// update, must roll back correctly on failure. These tests exist specifically to
-// guard the onMutate/onError/onSettled logic before Phase 5.5's Concept 8 rewires
-// this hook's fetcher to call the front server instead of Supabase directly.
+// update, must roll back correctly on failure. Rewired in Phase 5.5 Concept 7 to
+// call PUT/DELETE /api/posts/:id/like via apiPut/apiDelete instead of Supabase
+// directly; the onMutate/onError/onSettled logic itself is untouched by that
+// swap, so these guard the same contract as before, against the new fetcher.
 describe('useToggleLike', () => {
   const likeKey = ['likes', { postId: 'post-1', userId: 'user-1' }];
   const postKey = ['posts', { id: 'post-1' }];
 
   it('optimistically flips the like status and increments like_count before the network call resolves', async () => {
-    let resolveInsert: (value: { data: null; error: null }) => void = () => {};
-    const pendingInsert = new Promise<{ data: null; error: null }>((resolve) => {
-      resolveInsert = resolve;
+    let resolvePut: (value: undefined) => void = () => {};
+    const pendingPut = new Promise<undefined>((resolve) => {
+      resolvePut = resolve;
     });
-    mockFrom.mockReturnValue({ insert: jest.fn(() => pendingInsert) });
+    mockApiPut.mockReturnValue(pendingPut);
 
     const { result, queryClient } = await renderHookWithQueryClient(() => useToggleLike());
     queryClient.setQueryData(likeKey, false);
@@ -88,17 +92,16 @@ describe('useToggleLike', () => {
 
     await waitFor(() => expect(queryClient.getQueryData(likeKey)).toBe(true));
     expect((queryClient.getQueryData(postKey) as FeedPost).like_count).toBe(4);
+    expect(mockApiPut).toHaveBeenCalledWith('/api/posts/post-1/like');
 
     await act(async () => {
-      resolveInsert({ data: null, error: null });
+      resolvePut(undefined);
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
   });
 
   it('rolls back the optimistic update when the mutation fails', async () => {
-    mockFrom.mockReturnValue({
-      insert: jest.fn(() => Promise.resolve({ data: null, error: { message: 'insert failed' } })),
-    });
+    mockApiPut.mockRejectedValue(new Error('insert failed'));
 
     const { result, queryClient } = await renderHookWithQueryClient(() => useToggleLike());
     queryClient.setQueryData(likeKey, false);
@@ -112,5 +115,40 @@ describe('useToggleLike', () => {
 
     expect(queryClient.getQueryData(likeKey)).toBe(false);
     expect((queryClient.getQueryData(postKey) as FeedPost).like_count).toBe(3);
+  });
+
+  it('calls apiDelete (not apiPut) and decrements like_count when unliking', async () => {
+    mockApiDelete.mockResolvedValue(undefined);
+
+    const { result, queryClient } = await renderHookWithQueryClient(() => useToggleLike());
+    queryClient.setQueryData(likeKey, true);
+    queryClient.setQueryData(postKey, makeFeedPost({ like_count: 4 }));
+
+    await act(() => {
+      result.current.mutate({ postId: 'post-1', userId: 'user-1', liked: true });
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApiDelete).toHaveBeenCalledWith('/api/posts/post-1/like');
+    expect(mockApiPut).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(likeKey)).toBe(false);
+    expect((queryClient.getQueryData(postKey) as FeedPost).like_count).toBe(3);
+  });
+
+  it('rolls back correctly when unliking fails', async () => {
+    mockApiDelete.mockRejectedValue(new Error('delete failed'));
+
+    const { result, queryClient } = await renderHookWithQueryClient(() => useToggleLike());
+    queryClient.setQueryData(likeKey, true);
+    queryClient.setQueryData(postKey, makeFeedPost({ like_count: 4 }));
+
+    await act(() => {
+      result.current.mutate({ postId: 'post-1', userId: 'user-1', liked: true });
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(queryClient.getQueryData(likeKey)).toBe(true);
+    expect((queryClient.getQueryData(postKey) as FeedPost).like_count).toBe(4);
   });
 });
